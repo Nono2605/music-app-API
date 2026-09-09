@@ -73,6 +73,12 @@ tourner tel quel, sans adaptation de code.
 1. Pousser ce dossier sur un repo GitHub dédié.
 2. Sur [render.com](https://render.com) → New → Blueprint → sélectionner le
    repo. `render.yaml` définit déjà build/start commands.
+   - Si le service a été créé via "New Web Service" (formulaire manuel)
+     plutôt que via Blueprint, `render.yaml` n'est pas lu : renseigner à la
+     main **Build Command** = `npm install --include=dev && npm run build`
+     et **Start Command** = `npm start`. Le `--include=dev` est nécessaire
+     car `NODE_ENV=production` fait sauter les `devDependencies`
+     (TypeScript, `@types/*`) par défaut — sans ça, `tsc` échoue.
 3. Renseigner dans le dashboard Render (jamais dans `render.yaml`, jamais
    commité) : `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `CORS_ALLOWED_ORIGINS`
    (domaines Vercel du site et de l'app, séparés par des virgules).
