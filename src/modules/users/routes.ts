@@ -59,3 +59,20 @@ usersRouter.post("/profile", requireAuth, async (req, res, next) => {
     next(err);
   }
 });
+
+// GET /me/follows/:artistId — l'utilisateur connecté suit-il déjà cet artiste ?
+usersRouter.get("/me/follows/:artistId", requireAuth, async (req, res, next) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("follows")
+      .select("id")
+      .eq("follower_id", req.auth!.id)
+      .eq("artist_id", req.params.artistId)
+      .maybeSingle();
+
+    if (error) throw error;
+    res.json({ following: !!data });
+  } catch (err) {
+    next(err);
+  }
+});
