@@ -17,7 +17,7 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("username, display_name, avatar_url, bio, country, locale")
+      .select("username, display_name, avatar_url, bio, country, locale, explicit_content, favorite_genres")
       .eq("user_id", req.auth!.id)
       .maybeSingle();
 
@@ -29,26 +29,39 @@ usersRouter.get("/me", requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /profile — crée ou met à jour le profil public (onboarding).
-// username est unique en base : une violation de contrainte devient un 409.
+// POST /profile — crée ou met à jour le profil (identité publique et/ou
+// préférences d'écoute). username toujours requis (identifiant stable pour
+// l'upsert) ; les autres champs ne sont touchés que s'ils sont présents dans
+// le body, pour qu'un appel qui ne met à jour que les préférences n'efface
+// pas display_name/bio en les repassant à null. username est unique en
+// base : une violation de contrainte devient un 409.
 usersRouter.post("/profile", requireAuth, async (req, res, next) => {
   try {
-    const { username, display_name: displayName, bio } = req.body ?? {};
+    const {
+      username,
+      display_name: displayName,
+      bio,
+      explicit_content: explicitContent,
+      favorite_genres: favoriteGenres,
+    } = req.body ?? {};
     if (!username || typeof username !== "string" || username.trim().length < 3) {
       return res.status(400).json({ error: "username must be at least 3 characters" });
     }
 
+    const payload: Record<string, unknown> = {
+      user_id: req.auth!.id,
+      username: username.trim(),
+    };
+    if (displayName !== undefined) payload.display_name = displayName || null;
+    if (bio !== undefined) payload.bio = bio || null;
+    if (typeof explicitContent === "boolean") payload.explicit_content = explicitContent;
+    if (Array.isArray(favoriteGenres)) {
+      payload.favorite_genres = favoriteGenres.filter((g) => typeof g === "string" && g.trim());
+    }
+
     const { data, error } = await supabaseAdmin
       .from("profiles")
-      .upsert(
-        {
-          user_id: req.auth!.id,
-          username: username.trim(),
-          display_name: displayName ?? null,
-          bio: bio ?? null,
-        },
-        { onConflict: "user_id" }
-      )
+      .upsert(payload, { onConflict: "user_id" })
       .select()
       .single();
 
