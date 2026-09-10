@@ -456,6 +456,64 @@ creatorRouter.delete("/tracks/:id", async (req, res, next) => {
   }
 });
 
+const PROVENANCE_VALUES = new Set(["human", "ai", "hybrid"]);
+
+// GET /creator/tracks/:id/declaration — la déclaration de provenance IA la
+// plus récente (l'historique est conservé, jamais écrasé — cf. schéma).
+creatorRouter.get("/tracks/:id/declaration", async (req, res, next) => {
+  try {
+    const track = await ownedTrack(req.auth!.id, req.params.id);
+    if (!track) return res.status(404).json({ error: "Track not found" });
+
+    const { data, error } = await supabaseAdmin
+      .from("ai_declarations")
+      .select("id, provenance, ai_tool_names, description, status, declared_at")
+      .eq("track_id", track.id)
+      .order("declared_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /creator/tracks/:id/declaration — nouvelle déclaration (insert, pas
+// d'update : chaque déclaration reste dans l'historique).
+creatorRouter.post("/tracks/:id/declaration", async (req, res, next) => {
+  try {
+    const track = await ownedTrack(req.auth!.id, req.params.id);
+    if (!track) return res.status(404).json({ error: "Track not found" });
+
+    const provenance = req.body?.provenance;
+    if (typeof provenance !== "string" || !PROVENANCE_VALUES.has(provenance)) {
+      return res.status(400).json({ error: "provenance must be one of human, ai, hybrid" });
+    }
+    const description =
+      typeof req.body?.description === "string" && req.body.description.trim()
+        ? req.body.description.trim()
+        : null;
+
+    const { data, error } = await supabaseAdmin
+      .from("ai_declarations")
+      .insert({
+        track_id: track.id,
+        provenance,
+        description,
+        declared_by: req.auth!.id,
+      })
+      .select("id, provenance, ai_tool_names, description, status, declared_at")
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 const AUDIO_BUCKET = "track-audio";
 
 // POST /creator/tracks/:id/upload-url — URL signée pour upload direct
