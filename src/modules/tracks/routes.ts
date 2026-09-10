@@ -4,15 +4,21 @@ import { supabaseAdmin } from "../../lib/supabaseAdmin";
 export const tracksRouter = Router();
 
 // GET /tracks — catalogue public, paginé, morceaux publiés uniquement.
+// ?q= filtre par titre (recherche partielle, insensible à la casse).
 tracksRouter.get("/", async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
     const offset = Number(req.query.offset ?? 0);
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("tracks")
       .select("id, title, slug, duration_seconds, artists(name), albums(cover_url)")
-      .eq("status", "published")
+      .eq("status", "published");
+
+    if (q) query = query.ilike("title", `%${q}%`);
+
+    const { data, error } = await query
       .order("published_at", { ascending: false })
       .range(offset, offset + limit - 1);
 

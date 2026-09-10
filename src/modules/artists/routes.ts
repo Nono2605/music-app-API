@@ -4,14 +4,17 @@ import { supabaseAdmin } from "../../lib/supabaseAdmin";
 export const artistsRouter = Router();
 
 // GET /artists — catalogue public, paginé.
+// ?q= filtre par nom (recherche partielle, insensible à la casse).
 artistsRouter.get("/", async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
     const offset = Number(req.query.offset ?? 0);
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
 
-    const { data, error } = await supabaseAdmin
-      .from("artists")
-      .select("id, name, slug, avatar_url, verified")
+    let query = supabaseAdmin.from("artists").select("id, name, slug, avatar_url, verified");
+    if (q) query = query.ilike("name", `%${q}%`);
+
+    const { data, error } = await query
       .order("name", { ascending: true })
       .range(offset, offset + limit - 1);
 
