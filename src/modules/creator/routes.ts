@@ -157,6 +157,152 @@ creatorRouter.patch("/artist", async (req, res, next) => {
   }
 });
 
+// GET /creator/albums — les releases du créateur, tous statuts confondus.
+creatorRouter.get("/albums", async (req, res, next) => {
+  try {
+    const artistId = await myArtistId(req.auth!.id);
+    if (!artistId) return res.json({ data: [] });
+
+    const { data, error } = await supabaseAdmin
+      .from("albums")
+      .select("id, title, slug, type, cover_url, release_date, status, created_at")
+      .eq("artist_id", artistId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ALBUM_TYPES = new Set(["album", "ep", "single", "compilation"]);
+
+// POST /creator/albums — crée une release en brouillon.
+creatorRouter.post("/albums", async (req, res, next) => {
+  try {
+    const artistId = await myArtistId(req.auth!.id);
+    if (!artistId) return res.status(409).json({ error: "Create an artist profile first" });
+
+    const title = String(req.body?.title ?? "").trim();
+    if (title.length < 1) return res.status(400).json({ error: "title is required" });
+    const type = ALBUM_TYPES.has(req.body?.type) ? req.body.type : "single";
+
+    let slug = slugify(title);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabaseAdmin
+        .from("albums")
+        .insert({ artist_id: artistId, title, slug, type, status: "draft" })
+        .select("id, title, slug, type, status, created_at")
+        .single();
+
+      if (!error) return res.status(201).json(data);
+      if (error.code !== "23505") throw error;
+      slug = `${slugify(title)}-${randomSuffix()}`;
+    }
+    res.status(500).json({ error: "Could not allocate a unique slug" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Vérifie que :id appartient bien au créateur connecté.
+async function ownedAlbum(userId: string, albumId: string) {
+  const artistId = await myArtistId(userId);
+  if (!artistId) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("albums")
+    .select("id, artist_id, title, slug, type, cover_url, release_date, status, created_at")
+    .eq("id", albumId)
+    .eq("artist_id", artistId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// GET /creator/albums/:id — release + ses morceaux.
+creatorRouter.get("/albums/:id", async (req, res, next) => {
+  try {
+    const album = await ownedAlbum(req.auth!.id, req.params.id);
+    if (!album) return res.status(404).json({ error: "Album not found" });
+
+    const { data: tracks, error } = await supabaseAdmin
+      .from("tracks")
+      .select("id, title, status, track_number, duration_seconds")
+      .eq("album_id", album.id)
+      .order("track_number", { ascending: true });
+    if (error) throw error;
+
+    res.json({ ...album, tracks });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ALBUM_EDITABLE_STATUSES = new Set(["draft", "in_review", "archived"]);
+
+// PATCH /creator/albums/:id — métadonnées + transitions de statut limitées
+// (mêmes règles que les morceaux : "published" reste réservé à l'admin).
+creatorRouter.patch("/albums/:id", async (req, res, next) => {
+  try {
+    const album = await ownedAlbum(req.auth!.id, req.params.id);
+    if (!album) return res.status(404).json({ error: "Album not found" });
+
+    const updates: Record<string, unknown> = {};
+    if (typeof req.body?.title === "string" && req.body.title.trim()) {
+      updates.title = req.body.title.trim();
+    }
+    if (typeof req.body?.release_date === "string") updates.release_date = req.body.release_date;
+    if (typeof req.body?.status === "string") {
+      if (!ALBUM_EDITABLE_STATUSES.has(req.body.status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+      updates.status = req.body.status;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("albums")
+      .update(updates)
+      .eq("id", album.id)
+      .select("id, title, slug, type, status, release_date, updated_at")
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /creator/albums/:id — uniquement un brouillon ; détache ses
+// morceaux plutôt que de les supprimer.
+creatorRouter.delete("/albums/:id", async (req, res, next) => {
+  try {
+    const album = await ownedAlbum(req.auth!.id, req.params.id);
+    if (!album) return res.status(404).json({ error: "Album not found" });
+    if (album.status !== "draft") {
+      return res.status(409).json({ error: "Only draft releases can be deleted" });
+    }
+
+    const { error: detachError } = await supabaseAdmin
+      .from("tracks")
+      .update({ album_id: null })
+      .eq("album_id", album.id);
+    if (detachError) throw detachError;
+
+    const { error } = await supabaseAdmin.from("albums").delete().eq("id", album.id);
+    if (error) throw error;
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /creator/tracks — les morceaux du créateur, tous statuts confondus.
 creatorRouter.get("/tracks", async (req, res, next) => {
   try {
@@ -263,6 +409,17 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       }
       updates.status = req.body.status;
     }
+    if (req.body?.album_id !== undefined) {
+      if (req.body.album_id === null) {
+        updates.album_id = null;
+      } else if (typeof req.body.album_id === "string") {
+        const album = await ownedAlbum(req.auth!.id, req.body.album_id);
+        if (!album) return res.status(400).json({ error: "Invalid album_id" });
+        updates.album_id = album.id;
+      } else {
+        return res.status(400).json({ error: "Invalid album_id" });
+      }
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
@@ -272,7 +429,7 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       .from("tracks")
       .update(updates)
       .eq("id", track.id)
-      .select("id, title, slug, status, explicit, track_number, updated_at")
+      .select("id, title, slug, status, explicit, track_number, album_id, updated_at")
       .single();
 
     if (error) throw error;
