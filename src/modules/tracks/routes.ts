@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
+import { requireAuth } from "../../middleware/auth";
 
 export const tracksRouter = Router();
+
+const AUDIO_BUCKET = "track-audio";
 
 // GET /tracks — catalogue public, paginé, morceaux publiés uniquement.
 // ?q= filtre par titre (recherche partielle, insensible à la casse).
@@ -44,6 +47,42 @@ tracksRouter.get("/:id", async (req, res, next) => {
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "Track not found" });
     res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /tracks/:id/stream — URL signée (courte durée) vers le fichier audio.
+// Auth requise mais pas de vérification de rôle : tout compte connecté peut
+// écouter un morceau publié (les règles d'abonnement viendront se greffer
+// ici plus tard sans changer la forme de la réponse).
+tracksRouter.get("/:id/stream", requireAuth, async (req, res, next) => {
+  try {
+    const { data: track, error: trackError } = await supabaseAdmin
+      .from("tracks")
+      .select("id")
+      .eq("id", req.params.id)
+      .eq("status", "published")
+      .maybeSingle();
+    if (trackError) throw trackError;
+    if (!track) return res.status(404).json({ error: "Track not found" });
+
+    const { data: file, error: fileError } = await supabaseAdmin
+      .from("track_files")
+      .select("storage_key, format")
+      .eq("track_id", track.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (fileError) throw fileError;
+    if (!file) return res.status(404).json({ error: "No audio file for this track" });
+
+    const { data: signed, error: signError } = await supabaseAdmin.storage
+      .from(AUDIO_BUCKET)
+      .createSignedUrl(file.storage_key, 60 * 60 * 6);
+    if (signError) throw signError;
+
+    res.json({ url: signed.signedUrl, format: file.format });
   } catch (err) {
     next(err);
   }
