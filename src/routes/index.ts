@@ -5,6 +5,7 @@ import { tracksRouter } from "../modules/tracks/routes";
 import { albumsRouter } from "../modules/albums/routes";
 import { libraryRouter } from "../modules/library/routes";
 import { playlistsRouter } from "../modules/playlists/routes";
+import { creatorRouter } from "../modules/creator/routes";
 
 export const apiRouter = Router();
 
@@ -18,3 +19,4 @@ apiRouter.use("/tracks", tracksRouter);
 apiRouter.use("/albums", albumsRouter);
 apiRouter.use("/library", libraryRouter);
 apiRouter.use("/playlists", playlistsRouter);
+apiRouter.use("/creator", creatorRouter);
