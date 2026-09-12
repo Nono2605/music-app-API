@@ -215,6 +215,97 @@ creatorRouter.get("/audience", async (req, res, next) => {
   }
 });
 
+// GET /creator/analytics — composition du catalogue (statuts, types de
+// release, déclarations IA, durée). Pas de données d'écoute ici : ça
+// demande d'instrumenter le lecteur (cf. Audience Phase 2), hors périmètre.
+creatorRouter.get("/analytics", async (req, res, next) => {
+  try {
+    const artistId = await myArtistId(req.auth!.id);
+    if (!artistId) {
+      return res.json({
+        tracks_by_status: {},
+        releases_by_type: {},
+        provenance_breakdown: { human: 0, ai: 0, hybrid: 0, undeclared: 0 },
+        duration: { total_seconds: 0, average_seconds: 0, track_count: 0 },
+        explicit_count: 0,
+      });
+    }
+
+    const { data: tracks, error: tracksError } = await supabaseAdmin
+      .from("tracks")
+      .select("id, status, duration_seconds, explicit")
+      .eq("artist_id", artistId);
+    if (tracksError) throw tracksError;
+
+    const { data: albums, error: albumsError } = await supabaseAdmin
+      .from("albums")
+      .select("type")
+      .eq("artist_id", artistId);
+    if (albumsError) throw albumsError;
+
+    const trackIds = tracks.map((t) => t.id);
+    let declarations: { track_id: string; provenance: string }[] = [];
+    if (trackIds.length > 0) {
+      const { data, error: declError } = await supabaseAdmin
+        .from("ai_declarations")
+        .select("track_id, provenance, declared_at")
+        .in("track_id", trackIds)
+        .order("declared_at", { ascending: false });
+      if (declError) throw declError;
+      declarations = data;
+    }
+
+    // La plus récente déclaration par morceau fait foi (historique conservé,
+    // jamais écrasé — cf. schéma). declarations est déjà triée desc, donc la
+    // première occurrence rencontrée par morceau est la bonne.
+    const latestByTrack = new Map<string, string>();
+    for (const d of declarations) {
+      if (!latestByTrack.has(d.track_id)) latestByTrack.set(d.track_id, d.provenance);
+    }
+
+    const tracksByStatus: Record<string, number> = {};
+    let totalDuration = 0;
+    let durationCount = 0;
+    let explicitCount = 0;
+    const provenanceBreakdown: Record<string, number> = { human: 0, ai: 0, hybrid: 0, undeclared: 0 };
+
+    for (const t of tracks) {
+      tracksByStatus[t.status] = (tracksByStatus[t.status] ?? 0) + 1;
+      if (typeof t.duration_seconds === "number") {
+        totalDuration += t.duration_seconds;
+        durationCount += 1;
+      }
+      if (t.explicit) explicitCount += 1;
+
+      const provenance = latestByTrack.get(t.id);
+      if (provenance === "human" || provenance === "ai" || provenance === "hybrid") {
+        provenanceBreakdown[provenance] += 1;
+      } else {
+        provenanceBreakdown.undeclared += 1;
+      }
+    }
+
+    const releasesByType: Record<string, number> = {};
+    for (const a of albums) {
+      releasesByType[a.type] = (releasesByType[a.type] ?? 0) + 1;
+    }
+
+    res.json({
+      tracks_by_status: tracksByStatus,
+      releases_by_type: releasesByType,
+      provenance_breakdown: provenanceBreakdown,
+      duration: {
+        total_seconds: totalDuration,
+        average_seconds: durationCount > 0 ? Math.round(totalDuration / durationCount) : 0,
+        track_count: tracks.length,
+      },
+      explicit_count: explicitCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /creator/albums — les releases du créateur, tous statuts confondus.
 creatorRouter.get("/albums", async (req, res, next) => {
   try {
