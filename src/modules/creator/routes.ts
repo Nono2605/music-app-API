@@ -157,6 +157,42 @@ creatorRouter.patch("/artist", async (req, res, next) => {
   }
 });
 
+const ARTIST_IMAGE_BUCKET = "artist-images";
+const ARTIST_IMAGE_KINDS = new Set(["avatar", "banner"]);
+
+// POST /creator/artist/upload-url — URL signée pour uploader un avatar ou
+// une bannière. Bucket public en lecture (contrairement à track-audio) :
+// on renvoie directement l'URL publique déterministe, à sauvegarder ensuite
+// via PATCH /creator/artist une fois l'upload terminé côté client.
+creatorRouter.post("/artist/upload-url", async (req, res, next) => {
+  try {
+    const artistId = await myArtistId(req.auth!.id);
+    if (!artistId) return res.status(404).json({ error: "Artist profile not found" });
+
+    const kind = req.body?.kind;
+    if (typeof kind !== "string" || !ARTIST_IMAGE_KINDS.has(kind)) {
+      return res.status(400).json({ error: "kind must be one of: avatar, banner" });
+    }
+
+    const filename = String(req.body?.filename ?? "image");
+    const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
+    const path = `${artistId}/${kind}-${Date.now()}.${ext}`;
+
+    const { data, error } = await supabaseAdmin.storage
+      .from(ARTIST_IMAGE_BUCKET)
+      .createSignedUploadUrl(path);
+    if (error) throw error;
+
+    const {
+      data: { publicUrl },
+    } = supabaseAdmin.storage.from(ARTIST_IMAGE_BUCKET).getPublicUrl(path);
+
+    res.json({ path, token: data.token, signedUrl: data.signedUrl, publicUrl });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /creator/albums — les releases du créateur, tous statuts confondus.
 creatorRouter.get("/albums", async (req, res, next) => {
   try {
