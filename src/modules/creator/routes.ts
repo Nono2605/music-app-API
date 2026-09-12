@@ -193,6 +193,28 @@ creatorRouter.post("/artist/upload-url", async (req, res, next) => {
   }
 });
 
+// GET /creator/audience — nombre de followers + dates de follow brutes.
+// L'agrégation par jour / la fenêtre glissante se font côté client : à ce
+// stade (bêta) les volumes sont faibles, pas besoin d'une fonction SQL
+// dédiée pour un GROUP BY que quelques lignes de JS suffisent à faire.
+creatorRouter.get("/audience", async (req, res, next) => {
+  try {
+    const artistId = await myArtistId(req.auth!.id);
+    if (!artistId) return res.json({ followers_count: 0, follows: [] });
+
+    const { data, error } = await supabaseAdmin
+      .from("follows")
+      .select("created_at")
+      .eq("artist_id", artistId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    res.json({ followers_count: data.length, follows: data.map((f) => f.created_at) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /creator/albums — les releases du créateur, tous statuts confondus.
 creatorRouter.get("/albums", async (req, res, next) => {
   try {
