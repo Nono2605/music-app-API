@@ -348,7 +348,7 @@ creatorRouter.get("/tracks", async (req, res, next) => {
     const { data, error } = await supabaseAdmin
       .from("tracks")
       .select(
-        "id, title, slug, status, duration_seconds, explicit, album_id, created_at, published_at"
+        "id, title, slug, status, duration_seconds, explicit, album_id, created_at, published_at, albums(title, type)"
       )
       .eq("artist_id", artistId)
       .order("created_at", { ascending: false });
