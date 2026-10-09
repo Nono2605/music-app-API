@@ -556,6 +556,13 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       if (!CREATOR_EDITABLE_STATUSES.has(req.body.status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
+      // Un morceau publié (ou qui l'a été) a pu être écouté : on l'archive, on ne
+      // le repasse pas en brouillon. Le trigger tracks_lifecycle l'impose aussi en
+      // base ; ce contrôle donne une réponse claire plutôt qu'une erreur 500.
+      const wasPublished = track.status === "published" || track.published_at !== null;
+      if (wasPublished && req.body.status !== "archived") {
+        return res.status(409).json({ error: "A track that was published can only be archived" });
+      }
       updates.status = req.body.status;
     }
     if (req.body?.album_id !== undefined) {
@@ -593,8 +600,10 @@ creatorRouter.delete("/tracks/:id", async (req, res, next) => {
   try {
     const track = await ownedTrack(req.auth!.id, req.params.id);
     if (!track) return res.status(404).json({ error: "Track not found" });
-    if (track.status !== "draft") {
-      return res.status(409).json({ error: "Only draft tracks can be deleted" });
+    // published_at : un brouillon ramené d'une publication antérieure a pu être
+    // écouté, son historique d'écoute doit rester (aussi imposé par un trigger).
+    if (track.status !== "draft" || track.published_at !== null) {
+      return res.status(409).json({ error: "Only drafts that were never published can be deleted" });
     }
 
     const { error } = await supabaseAdmin.from("tracks").delete().eq("id", track.id);
