@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/auth";
 import { requireCreator } from "../../middleware/requireCreator";
 import { slugify, randomSuffix } from "../../lib/slugify";
 import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure } from "../../lib/audioProbe";
+import { syncTrackDuration } from "../../lib/syncTrackDuration";
 
 export const creatorRouter = Router();
 
@@ -706,31 +707,6 @@ const PROBE_STATUS: Record<AudioProbeFailure, number> = {
   unsupported: 415,
   no_duration: 422,
 };
-
-// La durée d'un morceau est celle du fichier réellement streamé : le plus
-// ancien (voir GET /tracks/:id/stream, qui trie par created_at croissant). À
-// rappeler après tout ajout ou retrait de fichier.
-async function syncTrackDuration(trackId: string) {
-  const { data: first, error } = await supabaseAdmin
-    .from("track_files")
-    .select("duration_seconds")
-    .eq("track_id", trackId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-
-  // Fichier le plus ancien jamais mesuré (antérieur à la mesure automatique) :
-  // on garde la durée déjà enregistrée plutôt que de l'effacer.
-  if (first && first.duration_seconds === null) return;
-
-  // Plus aucun fichier : la durée n'a plus de support, elle repasse à null.
-  const { error: updateError } = await supabaseAdmin
-    .from("tracks")
-    .update({ duration_seconds: first?.duration_seconds ?? null })
-    .eq("id", trackId);
-  if (updateError) throw updateError;
-}
 
 // POST /creator/tracks/:id/files — enregistre le fichier une fois l'upload
 // terminé. Le client envoie le fichier directement au stockage ; le serveur le
