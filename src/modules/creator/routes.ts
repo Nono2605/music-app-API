@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { requireCreator } from "../../middleware/requireCreator";
 import { slugify, randomSuffix } from "../../lib/slugify";
+import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure } from "../../lib/audioProbe";
 
 export const creatorRouter = Router();
 
@@ -681,8 +682,11 @@ creatorRouter.post("/tracks/:id/upload-url", async (req, res, next) => {
     const track = await ownedTrack(req.auth!.id, req.params.id);
     if (!track) return res.status(404).json({ error: "Track not found" });
 
+    // L'extension vient du client : on ne garde qu'une extension plausible. Elle
+    // n'a aucun rôle dans la détection du format (faite sur le contenu).
     const filename = String(req.body?.filename ?? "audio");
-    const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
+    const rawExt = filename.includes(".") ? (filename.split(".").pop() ?? "").toLowerCase() : "";
+    const ext = /^[a-z0-9]{1,5}$/.test(rawExt) ? rawExt : "bin";
     const path = `${track.artist_id}/${track.id}/${Date.now()}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage.from(AUDIO_BUCKET).createSignedUploadUrl(path);
@@ -694,15 +698,97 @@ creatorRouter.post("/tracks/:id/upload-url", async (req, res, next) => {
   }
 });
 
-// POST /creator/tracks/:id/files — enregistre le fichier une fois l'upload terminé.
+const PROBE_STATUS: Record<AudioProbeFailure, number> = {
+  not_found: 400,
+  unreachable: 502,
+  too_large: 413,
+  not_audio: 422,
+  unsupported: 415,
+  no_duration: 422,
+};
+
+// La durée d'un morceau est celle du fichier réellement streamé : le plus
+// ancien (voir GET /tracks/:id/stream, qui trie par created_at croissant). À
+// rappeler après tout ajout ou retrait de fichier.
+async function syncTrackDuration(trackId: string) {
+  const { data: first, error } = await supabaseAdmin
+    .from("track_files")
+    .select("duration_seconds")
+    .eq("track_id", trackId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+
+  // Fichier le plus ancien jamais mesuré (antérieur à la mesure automatique) :
+  // on garde la durée déjà enregistrée plutôt que de l'effacer.
+  if (first && first.duration_seconds === null) return;
+
+  // Plus aucun fichier : la durée n'a plus de support, elle repasse à null.
+  const { error: updateError } = await supabaseAdmin
+    .from("tracks")
+    .update({ duration_seconds: first?.duration_seconds ?? null })
+    .eq("id", trackId);
+  if (updateError) throw updateError;
+}
+
+// POST /creator/tracks/:id/files — enregistre le fichier une fois l'upload
+// terminé. Le client envoie le fichier directement au stockage ; le serveur le
+// relit ici pour le MESURER : format réel, durée, débit, taille, empreinte.
+// Ce que le client déclare (format, taille) est ignoré, et la durée du morceau
+// est mise à jour depuis la mesure.
 creatorRouter.post("/tracks/:id/files", async (req, res, next) => {
   try {
     const track = await ownedTrack(req.auth!.id, req.params.id);
     if (!track) return res.status(404).json({ error: "Track not found" });
 
-    const { path, format, file_size_bytes: fileSizeBytes } = req.body ?? {};
-    if (typeof path !== "string" || !path.startsWith(`${track.artist_id}/${track.id}/`)) {
+    // Exactement la forme produite par /upload-url : un chemin libre (« ../ »)
+    // pourrait viser le fichier privé d'un autre artiste.
+    const path = req.body?.path;
+    const expectedPath = new RegExp(`^${track.artist_id}/${track.id}/\\d+\\.[a-z0-9]{1,5}$`);
+    if (typeof path !== "string" || !expectedPath.test(path)) {
       return res.status(400).json({ error: "Invalid file path" });
+    }
+
+    const { data: alreadyAttached, error: alreadyError } = await supabaseAdmin
+      .from("track_files")
+      .select("id")
+      .eq("track_id", track.id)
+      .eq("storage_key", path)
+      .limit(1)
+      .maybeSingle();
+    if (alreadyError) throw alreadyError;
+    if (alreadyAttached) return res.status(409).json({ error: "This file is already attached to the track" });
+
+    const { data: signed, error: signError } = await supabaseAdmin.storage
+      .from(AUDIO_BUCKET)
+      .createSignedUrl(path, 300);
+    if (signError || !signed) return res.status(400).json({ error: "The uploaded file could not be found" });
+
+    let probe: AudioProbe;
+    try {
+      probe = await probeAudioUrl(signed.signedUrl);
+    } catch (err) {
+      if (!(err instanceof AudioProbeError)) throw err;
+      // Fichier inutilisable : on retire l'objet plutôt que de laisser un orphelin.
+      if (err.reason !== "unreachable" && err.reason !== "not_found") {
+        await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
+      }
+      return res.status(PROBE_STATUS[err.reason]).json({ error: err.message });
+    }
+
+    // Même contenu déjà attaché à ce morceau (réupload du même fichier).
+    const { data: duplicate, error: duplicateError } = await supabaseAdmin
+      .from("track_files")
+      .select("id")
+      .eq("track_id", track.id)
+      .eq("checksum", probe.sha256)
+      .limit(1)
+      .maybeSingle();
+    if (duplicateError) throw duplicateError;
+    if (duplicate) {
+      await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
+      return res.status(409).json({ error: "This exact file is already attached to the track" });
     }
 
     const { data, error } = await supabaseAdmin
@@ -711,13 +797,18 @@ creatorRouter.post("/tracks/:id/files", async (req, res, next) => {
         track_id: track.id,
         storage_provider: "supabase",
         storage_key: path,
-        format: typeof format === "string" ? format : "unknown",
-        file_size_bytes: typeof fileSizeBytes === "number" ? fileSizeBytes : null,
+        format: probe.format,
+        file_size_bytes: probe.sizeBytes,
+        bitrate_kbps: probe.bitrateKbps,
+        checksum: probe.sha256,
+        duration_seconds: probe.durationSeconds,
+        verified_at: new Date().toISOString(),
       })
-      .select("id, format, file_size_bytes, created_at")
+      .select("id, format, file_size_bytes, bitrate_kbps, duration_seconds, created_at")
       .single();
-
     if (error) throw error;
+
+    await syncTrackDuration(track.id);
     res.status(201).json(data);
   } catch (err) {
     next(err);
@@ -739,10 +830,25 @@ creatorRouter.delete("/tracks/:id/files/:fileId", async (req, res, next) => {
     if (fileError) throw fileError;
     if (!file) return res.status(404).json({ error: "File not found" });
 
+    // Un morceau publié garde toujours au moins un fichier : sans lui,
+    // GET /tracks/:id/stream répondrait 404 à ses auditeurs.
+    if (track.status === "published") {
+      const { count, error: countError } = await supabaseAdmin
+        .from("track_files")
+        .select("id", { count: "exact", head: true })
+        .eq("track_id", track.id);
+      if (countError) throw countError;
+      if ((count ?? 0) <= 1) {
+        return res.status(409).json({ error: "A published track must keep an audio file" });
+      }
+    }
+
     await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([file.storage_key]);
 
     const { error } = await supabaseAdmin.from("track_files").delete().eq("id", file.id);
     if (error) throw error;
+
+    await syncTrackDuration(track.id);
     res.status(204).end();
   } catch (err) {
     next(err);
