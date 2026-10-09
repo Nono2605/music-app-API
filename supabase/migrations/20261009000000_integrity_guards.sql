@@ -98,6 +98,7 @@ select pg_temp.replace_fk('albums', 'artist_id', 'artists', 'restrict');
 create or replace function tracks_lifecycle()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if tg_op = 'UPDATE' then
@@ -147,6 +148,7 @@ create trigger tracks_lifecycle
 create or replace function tracks_no_delete_published()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if old.status <> 'draft' or old.published_at is not null then
