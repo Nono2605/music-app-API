@@ -2,6 +2,8 @@ import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { clock } from "../../lib/clock";
+import { env } from "../../config/env";
+import { parseClientInfo } from "../../lib/clientInfo";
 import { loadEntitlement } from "../../lib/loadEntitlement";
 import { signedStreamUrl } from "../../lib/streamUrl";
 import { applyHeartbeat, HEARTBEAT_EVERY_SECONDS, type HeartbeatState } from "./heartbeat";
@@ -105,6 +107,8 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
 
     const now = clock.now();
     const entitlement = await loadEntitlement(userId, now);
+    // Pays, appareil, empreinte d'IP : transmis par la webapp (lib/clientInfo.ts).
+    const client = parseClientInfo(req.headers, { ipHashSecret: env.ipHashSecret, now });
 
     const insert = () =>
       supabaseAdmin
@@ -121,6 +125,9 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
           source_id: source_id ?? null,
           client_session_id: client_session_id ?? null,
           app_version: app_version ?? null,
+          country_code: client.country_code,
+          device_type: client.device_type,
+          ip_hash: client.ip_hash,
           started_at: now.toISOString(),
           last_heartbeat_at: now.toISOString(),
         })

@@ -25,6 +25,9 @@ export const env = {
   // sans revenu. « live » : le droit d'écoute vient de l'abonnement de l'utilisateur
   // (voir lib/entitlement.ts). À ne passer à « live » qu'à la fin de la bêta.
   entitlementMode: (process.env.ENTITLEMENT_MODE === "live" ? "live" : "beta") as "beta" | "live",
+  // Secret qui sale l'empreinte d'IP des lectures (lib/clientInfo.ts). Facultatif :
+  // sans lui, plays.ip_hash reste vide (jamais d'empreinte non salée).
+  ipHashSecret: process.env.IP_HASH_SECRET || undefined,
   corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
