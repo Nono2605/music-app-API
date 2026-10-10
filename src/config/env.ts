@@ -21,6 +21,10 @@ export const env = {
   port: Number(process.env.PORT ?? 4000),
   supabaseUrl: required("SUPABASE_URL"),
   supabaseSecretKey,
+  // « beta » (par défaut, et en cas de doute) : toute lecture est enregistrée mais
+  // sans revenu. « live » : le droit d'écoute vient de l'abonnement de l'utilisateur
+  // (voir lib/entitlement.ts). À ne passer à « live » qu'à la fin de la bêta.
+  entitlementMode: (process.env.ENTITLEMENT_MODE === "live" ? "live" : "beta") as "beta" | "live",
   corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())

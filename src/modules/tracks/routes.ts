@@ -1,10 +1,9 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
+import { signedStreamUrl } from "../../lib/streamUrl";
 
 export const tracksRouter = Router();
-
-const AUDIO_BUCKET = "track-audio";
 
 // GET /tracks — catalogue public, paginé, morceaux publiés uniquement.
 // ?q= filtre par titre (recherche partielle, insensible à la casse).
@@ -52,10 +51,12 @@ tracksRouter.get("/:id", async (req, res, next) => {
   }
 });
 
-// GET /tracks/:id/stream — URL signée (courte durée) vers le fichier audio.
-// Auth requise mais pas de vérification de rôle : tout compte connecté peut
-// écouter un morceau publié (les règles d'abonnement viendront se greffer
-// ici plus tard sans changer la forme de la réponse).
+// GET /tracks/:id/stream — URL signée vers le fichier audio.
+//
+// DÉPRÉCIÉE : elle délivre un morceau sans rien enregistrer, donc une écoute par
+// ce chemin n'est ni comptée ni rémunérée. La webapp passe désormais par
+// POST /plays (modules/plays). À SUPPRIMER une fois la webapp déployée sur la
+// nouvelle route : la laisser ouverte permettrait d'écouter sans être compté.
 tracksRouter.get("/:id/stream", requireAuth, async (req, res, next) => {
   try {
     const { data: track, error: trackError } = await supabaseAdmin
@@ -67,22 +68,10 @@ tracksRouter.get("/:id/stream", requireAuth, async (req, res, next) => {
     if (trackError) throw trackError;
     if (!track) return res.status(404).json({ error: "Track not found" });
 
-    const { data: file, error: fileError } = await supabaseAdmin
-      .from("track_files")
-      .select("storage_key, format")
-      .eq("track_id", track.id)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (fileError) throw fileError;
-    if (!file) return res.status(404).json({ error: "No audio file for this track" });
+    const stream = await signedStreamUrl(track.id);
+    if (!stream) return res.status(404).json({ error: "No audio file for this track" });
 
-    const { data: signed, error: signError } = await supabaseAdmin.storage
-      .from(AUDIO_BUCKET)
-      .createSignedUrl(file.storage_key, 60 * 60 * 6);
-    if (signError) throw signError;
-
-    res.json({ url: signed.signedUrl, format: file.format });
+    res.json(stream);
   } catch (err) {
     next(err);
   }

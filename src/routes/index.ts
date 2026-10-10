@@ -7,6 +7,7 @@ import { libraryRouter } from "../modules/library/routes";
 import { playlistsRouter } from "../modules/playlists/routes";
 import { subscriptionsRouter } from "../modules/subscriptions/routes";
 import { creatorRouter } from "../modules/creator/routes";
+import { playsRouter } from "../modules/plays/routes";
 
 export const apiRouter = Router();
 
@@ -22,3 +23,4 @@ apiRouter.use("/library", libraryRouter);
 apiRouter.use("/playlists", playlistsRouter);
 apiRouter.use("/subscriptions", subscriptionsRouter);
 apiRouter.use("/creator", creatorRouter);
+apiRouter.use("/plays", playsRouter);
