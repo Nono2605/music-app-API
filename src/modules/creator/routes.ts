@@ -5,6 +5,8 @@ import { requireCreator } from "../../middleware/requireCreator";
 import { slugify, randomSuffix } from "../../lib/slugify";
 import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure } from "../../lib/audioProbe";
 import { syncTrackDuration } from "../../lib/syncTrackDuration";
+import { myArtistId } from "../../lib/myArtistId";
+import { creatorStatsRouter } from "./stats";
 
 export const creatorRouter = Router();
 
@@ -74,17 +76,8 @@ creatorRouter.post("/apply", async (req, res, next) => {
 
 creatorRouter.use(requireCreator);
 
-// Résout l'artiste du créateur connecté. Un créateur possède au plus une
-// page artiste dans cette version (pas de multi-artiste par compte).
-async function myArtistId(userId: string): Promise<string | null> {
-  const { data, error } = await supabaseAdmin
-    .from("artists")
-    .select("id")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.id ?? null;
-}
+// Statistiques de lecture : GET /creator/stats (voir stats.ts).
+creatorRouter.use("/stats", creatorStatsRouter);
 
 // GET /creator/artist — la page artiste du créateur connecté (ou null).
 creatorRouter.get("/artist", async (req, res, next) => {
