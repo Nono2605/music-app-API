@@ -1,4 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
+import { isBlockedStatus } from "../lib/accountStatus";
+import { loadAccountStatus } from "../lib/loadAccountStatus";
 import { supabaseAdmin } from "../lib/supabaseAdmin";
 
 export interface AuthContext {
@@ -33,6 +35,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const { data, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !data.user) {
       return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    // Un compte suspendu ou supprimé depuis l'admin ne passe plus, même avec un
+    // jeton encore valide (le bannissement Supabase Auth n'invalide pas un jeton
+    // déjà émis, valable jusqu'à une heure). Voir lib/accountStatus.ts.
+    if (isBlockedStatus(await loadAccountStatus(data.user.id))) {
+      return res.status(403).json({ error: "Account is not active" });
     }
 
     req.auth = { id: data.user.id, email: data.user.email };
