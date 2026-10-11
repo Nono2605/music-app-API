@@ -87,7 +87,7 @@ creatorRouter.get("/artist", async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
       .from("artists")
-      .select("id, name, slug, bio, avatar_url, banner_url, country, verified")
+      .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
       .eq("user_id", req.auth!.id)
       .maybeSingle();
 
@@ -127,7 +127,7 @@ creatorRouter.post("/artist", async (req, res, next) => {
       const { data, error } = await supabaseAdmin
         .from("artists")
         .insert({ user_id: req.auth!.id, name, slug })
-        .select("id, name, slug, bio, avatar_url, banner_url, country, verified")
+        .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
         .single();
 
       if (!error) return res.status(201).json(data);
@@ -202,7 +202,7 @@ creatorRouter.patch("/artist", async (req, res, next) => {
       .from("artists")
       .update(updates)
       .eq("id", artistId)
-      .select("id, name, slug, bio, avatar_url, banner_url, country, verified")
+      .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
       .single();
 
     if (error) throw error;
@@ -369,7 +369,7 @@ creatorRouter.get("/albums", async (req, res, next) => {
 
     const { data, error } = await supabaseAdmin
       .from("albums")
-      .select("id, title, slug, type, cover_url, release_date, status, created_at")
+      .select("id, catalog_code, title, slug, type, cover_url, release_date, status, created_at")
       .eq("artist_id", artistId)
       .order("created_at", { ascending: false });
 
@@ -397,7 +397,7 @@ creatorRouter.post("/albums", async (req, res, next) => {
       const { data, error } = await supabaseAdmin
         .from("albums")
         .insert({ artist_id: artistId, title, slug, type, status: "draft" })
-        .select("id, title, slug, type, status, created_at")
+        .select("id, catalog_code, title, slug, type, status, created_at")
         .single();
 
       if (!error) return res.status(201).json(data);
@@ -417,7 +417,7 @@ async function ownedAlbum(userId: string, albumId: string) {
 
   const { data, error } = await supabaseAdmin
     .from("albums")
-    .select("id, artist_id, title, slug, type, cover_url, release_date, status, created_at")
+    .select("id, catalog_code, artist_id, title, slug, type, cover_url, release_date, status, created_at")
     .eq("id", albumId)
     .eq("artist_id", artistId)
     .maybeSingle();
@@ -433,7 +433,7 @@ creatorRouter.get("/albums/:id", async (req, res, next) => {
 
     const { data: tracks, error } = await supabaseAdmin
       .from("tracks")
-      .select("id, title, status, track_number, duration_seconds")
+      .select("id, catalog_code, title, status, track_number, duration_seconds")
       .eq("album_id", album.id)
       .order("track_number", { ascending: true });
     if (error) throw error;
@@ -494,7 +494,7 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       .from("albums")
       .update(updates)
       .eq("id", album.id)
-      .select("id, title, slug, type, status, release_date, updated_at")
+      .select("id, catalog_code, title, slug, type, status, release_date, updated_at")
       .single();
 
     if (error) throw error;
@@ -537,7 +537,7 @@ creatorRouter.get("/tracks", async (req, res, next) => {
     const { data, error } = await supabaseAdmin
       .from("tracks")
       .select(
-        "id, title, slug, status, duration_seconds, explicit, album_id, created_at, published_at, albums(title, type)"
+        "id, catalog_code, title, slug, status, duration_seconds, explicit, track_number, album_id, created_at, published_at, albums(catalog_code, title, type)"
       )
       .eq("artist_id", artistId)
       .order("created_at", { ascending: false });
@@ -564,7 +564,7 @@ creatorRouter.post("/tracks", async (req, res, next) => {
       const { data, error } = await supabaseAdmin
         .from("tracks")
         .insert({ artist_id: artistId, title, slug, explicit, status: "draft" })
-        .select("id, title, slug, status, explicit, created_at")
+        .select("id, catalog_code, title, slug, status, explicit, created_at")
         .single();
 
       if (!error) return res.status(201).json(data);
@@ -585,7 +585,7 @@ async function ownedTrack(userId: string, trackId: string) {
   const { data, error } = await supabaseAdmin
     .from("tracks")
     .select(
-      "id, artist_id, title, slug, status, explicit, track_number, duration_seconds, album_id, created_at, published_at"
+      "id, catalog_code, artist_id, title, slug, status, explicit, track_number, duration_seconds, album_id, created_at, published_at"
     )
     .eq("id", trackId)
     .eq("artist_id", artistId)
@@ -627,7 +627,14 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       updates.title = req.body.title.trim();
     }
     if (typeof req.body?.explicit === "boolean") updates.explicit = req.body.explicit;
-    if (typeof req.body?.track_number === "number") updates.track_number = req.body.track_number;
+    // Position dans la release : un entier de 1 à 999 (la base l'impose aussi, >= 1).
+    if (req.body?.track_number !== undefined) {
+      const position = req.body.track_number;
+      if (!Number.isInteger(position) || position < 1 || position > 999) {
+        return res.status(400).json({ error: "track_number must be a whole number from 1 to 999" });
+      }
+      updates.track_number = position;
+    }
     if (typeof req.body?.status === "string") {
       if (!CREATOR_EDITABLE_STATUSES.has(req.body.status)) {
         return res.status(400).json({ error: "Invalid status" });
@@ -671,7 +678,7 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       .from("tracks")
       .update(updates)
       .eq("id", track.id)
-      .select("id, title, slug, status, explicit, track_number, album_id, updated_at")
+      .select("id, catalog_code, title, slug, status, explicit, track_number, album_id, updated_at")
       .single();
 
     if (error) throw error;
