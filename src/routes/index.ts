@@ -9,6 +9,7 @@ import { subscriptionsRouter } from "../modules/subscriptions/routes";
 import { creatorRouter } from "../modules/creator/routes";
 import { playsRouter } from "../modules/plays/routes";
 import { privacyRouter } from "../modules/privacy/routes";
+import { stripeRouter } from "../modules/stripe/routes";
 
 export const apiRouter = Router();
 
@@ -26,3 +27,4 @@ apiRouter.use("/playlists", playlistsRouter);
 apiRouter.use("/subscriptions", subscriptionsRouter);
 apiRouter.use("/creator", creatorRouter);
 apiRouter.use("/plays", playsRouter);
+apiRouter.use("/stripe", stripeRouter);

@@ -22,6 +22,7 @@
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "music-metadata": "^12.1.0",
+    "stripe": "23.0.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {

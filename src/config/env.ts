@@ -29,6 +29,10 @@ export const env = {
   // Secret qui sale l'empreinte d'IP des lectures (lib/clientInfo.ts). Facultatif :
   // sans lui, plays.ip_hash reste vide (jamais d'empreinte non salée).
   ipHashSecret: process.env.IP_HASH_SECRET || undefined,
+  // Stripe (lib/stripe.ts). La clé vient UNIQUEMENT de l'environnement (Render), jamais du
+  // code ni d'un dépôt. Une clé « live » est refusée tant que STRIPE_ALLOW_LIVE n'est pas « yes ».
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() || undefined,
+  stripeAllowLive: process.env.STRIPE_ALLOW_LIVE === "yes",
   // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
   // à demander (aucune par défaut : on ne demande rien d'inutile).
   privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),
