@@ -9,8 +9,8 @@
 //
 // Ce que fait la purge, pour chaque artiste anonymisé, échu, non purgé et SANS gel légal
 // (`legal_hold`) :
-//   - supprime du stockage ses fichiers audio (bucket track-audio) et ses images
-//     (bucket artist-images) ;
+//   - supprime du stockage ses fichiers audio (bucket track-audio), ses images
+//     (bucket artist-images) et les pochettes de ses releases (bucket release-covers) ;
 //   - marque `track_files.purged_at` et `artists.purged_at`.
 // Ce qu'elle NE fait JAMAIS : supprimer une ligne en base. Numéros, titres, durées,
 // ISRC, empreintes SHA-256, écoutes, royalties et déclarations restent (pièces
@@ -30,6 +30,7 @@ import { chunk, isPurgeDue } from "../lib/purge";
 
 const AUDIO_BUCKET = "track-audio";
 const IMAGE_BUCKET = "artist-images";
+const COVER_BUCKET = "release-covers";
 const REMOVE_BATCH = 100;
 
 const { values } = parseArgs({
@@ -110,12 +111,26 @@ async function purgeDue(): Promise<void> {
     if (imagesError) throw imagesError;
     const imagePaths = (images ?? []).map((i) => `${artist.id}/${i.name}`);
 
-    console.log(`- ${artist.catalog_code} : ${files.length} fichier(s) audio, ${imagePaths.length} image(s)`);
+    // Pochettes des releases : même dossier par artiste, dans leur propre bucket. Le bucket
+    // peut ne pas exister encore (migration 20261012000000) : alors il n'y a rien à purger.
+    const { data: covers, error: coversError } = await supabaseAdmin.storage.from(COVER_BUCKET).list(artist.id);
+    if (coversError && !/bucket not found/i.test(coversError.message)) throw coversError;
+    const coverPaths = (covers ?? []).map((c) => `${artist.id}/${c.name}`);
+
+    console.log(
+      `- ${artist.catalog_code} : ${files.length} fichier(s) audio, ${imagePaths.length} image(s), ${coverPaths.length} pochette(s)`
+    );
     if (!apply) continue;
 
     try {
       await removeFromBucket(AUDIO_BUCKET, files.map((f) => f.storage_key));
       await removeFromBucket(IMAGE_BUCKET, imagePaths);
+      if (coverPaths.length > 0) {
+        await removeFromBucket(COVER_BUCKET, coverPaths);
+        // Le fichier n'existe plus : on ne laisse pas de lien mort. La ligne de la release reste.
+        const { error: clearError } = await supabaseAdmin.from("albums").update({ cover_url: null }).eq("artist_id", artist.id);
+        if (clearError) throw clearError;
+      }
       const stamp = new Date().toISOString();
       if (files.length > 0) {
         const { error: markError } = await supabaseAdmin

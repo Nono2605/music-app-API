@@ -9,6 +9,7 @@ import { myArtistId } from "../../lib/myArtistId";
 import { trackReviewProblem, releaseReviewProblem } from "../../lib/reviewReadiness";
 import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
+import { COVER_BUCKET, coverExtension, coverPath, ownCoverPath } from "../../lib/coverUrl";
 import { creatorStatsRouter } from "./stats";
 
 export const creatorRouter = Router();
@@ -444,6 +445,44 @@ creatorRouter.get("/albums/:id", async (req, res, next) => {
   }
 });
 
+// URL publique du dossier de l'artiste dans le bucket des pochettes (« / » final).
+function coverPublicPrefix(artistId: string): string {
+  return supabaseAdmin.storage.from(COVER_BUCKET).getPublicUrl(`${artistId}/`).data.publicUrl;
+}
+
+// POST /creator/albums/:id/cover-upload-url — URL signée pour envoyer la pochette d'une
+// release directement dans le stockage. Le corps donne le type du fichier (`content_type`) ;
+// la réponse contient l'URL publique à enregistrer ensuite avec PATCH /creator/albums/:id
+// ({ cover_url }) une fois l'envoi terminé. Le stockage lui-même refuse tout autre type
+// que JPEG / PNG / WebP et les fichiers de plus de 5 Mo.
+creatorRouter.post("/albums/:id/cover-upload-url", async (req, res, next) => {
+  try {
+    const album = await ownedAlbum(req.auth!.id, req.params.id);
+    if (!album) return res.status(404).json({ error: "Album not found" });
+
+    const ext = coverExtension(req.body?.content_type);
+    if (!ext) return res.status(400).json({ error: "The cover must be a JPEG, PNG or WebP image." });
+
+    const path = coverPath(album.artist_id, album.id, ext, Date.now());
+    const { data, error } = await supabaseAdmin.storage.from(COVER_BUCKET).createSignedUploadUrl(path);
+    if (error) {
+      // Migration 20261012000000_release_covers_storage.sql pas encore appliquée.
+      if (/bucket not found/i.test(error.message)) {
+        return res.status(503).json({ error: "Cover uploads aren't available yet. Try again shortly." });
+      }
+      throw error;
+    }
+
+    const {
+      data: { publicUrl },
+    } = supabaseAdmin.storage.from(COVER_BUCKET).getPublicUrl(path);
+
+    res.json({ path, token: data.token, signedUrl: data.signedUrl, publicUrl });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const ALBUM_EDITABLE_STATUSES = new Set(["draft", "in_review", "archived"]);
 
 // PATCH /creator/albums/:id — métadonnées + transitions de statut limitées
@@ -458,6 +497,23 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       updates.title = req.body.title.trim();
     }
     if (typeof req.body?.release_date === "string") updates.release_date = req.body.release_date;
+
+    // Pochette : une URL de NOTRE bucket, dans le dossier de cet artiste, ou null pour la retirer.
+    // Ancien fichier supprimé du stockage une fois la nouvelle valeur enregistrée.
+    let staleCoverPath: string | null = null;
+    if ("cover_url" in (req.body ?? {})) {
+      const prefix = coverPublicPrefix(album.artist_id);
+      if (req.body.cover_url === null) {
+        updates.cover_url = null;
+      } else if (ownCoverPath(req.body.cover_url, prefix, album.artist_id)) {
+        updates.cover_url = req.body.cover_url;
+      } else {
+        return res.status(400).json({ error: "Invalid cover. Upload it again." });
+      }
+      if (updates.cover_url !== album.cover_url) {
+        staleCoverPath = ownCoverPath(album.cover_url, prefix, album.artist_id);
+      }
+    }
     if (typeof req.body?.status === "string") {
       if (!ALBUM_EDITABLE_STATUSES.has(req.body.status)) {
         return res.status(400).json({ error: "Invalid status" });
@@ -494,10 +550,16 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       .from("albums")
       .update(updates)
       .eq("id", album.id)
-      .select("id, catalog_code, title, slug, type, status, release_date, updated_at")
+      .select("id, catalog_code, title, slug, type, cover_url, status, release_date, updated_at")
       .single();
 
     if (error) throw error;
+
+    // Best effort : un fichier qui reste n'est qu'un déchet de stockage, pas une erreur pour le créateur.
+    if (staleCoverPath) {
+      const { error: removeError } = await supabaseAdmin.storage.from(COVER_BUCKET).remove([staleCoverPath]);
+      if (removeError) console.error("Could not remove previous cover:", removeError.message);
+    }
     res.json(data);
   } catch (err) {
     next(err);
