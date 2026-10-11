@@ -33,6 +33,14 @@ export const env = {
   // code ni d'un dépôt. Une clé « live » est refusée tant que STRIPE_ALLOW_LIVE n'est pas « yes ».
   stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() || undefined,
   stripeAllowLive: process.env.STRIPE_ALLOW_LIVE === "yes",
+  // Secret de signature des webhooks (« whsec_… », Stripe > Developers > Webhooks). Sans lui,
+  // l'API refuse toute livraison d'événement (503) : jamais d'événement non vérifié.
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() || undefined,
+  // Calcul automatique de la taxe par Stripe Tax : « on » seulement une fois Stripe Tax réglé
+  // (adresse de l'entreprise, pays d'enregistrement), sinon la création du paiement échoue.
+  stripeAutomaticTax: process.env.STRIPE_AUTOMATIC_TAX === "on",
+  // Adresse de l'app auditeur (retour de Stripe Checkout et du portail client).
+  checkoutReturnBaseUrl: process.env.CHECKOUT_RETURN_BASE_URL?.trim() || undefined,
   // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
   // à demander (aucune par défaut : on ne demande rien d'inutile).
   privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),

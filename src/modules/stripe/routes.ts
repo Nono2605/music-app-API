@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { syncPlansToStripe } from "../../lib/billing";
 import { getStripe, stripeMode, stripeProblem } from "../../lib/stripe";
 import { requireAdmin } from "../../middleware/requireAdmin";
 import { requireAuth } from "../../middleware/auth";
@@ -35,5 +36,21 @@ stripeRouter.get("/status", requireAuth, requireAdmin, async (_req, res) => {
     const { type, code } = err as { type?: string; code?: string };
     console.error(`Stripe status check failed: ${type ?? "unknown"} ${code ?? ""}`.trim());
     res.json({ configured: true, mode, ok: false, error: type ?? "unknown_error", code: code ?? null });
+  }
+});
+
+// POST /stripe/plans/sync — crée dans Stripe le produit et le prix de chaque plan payant qui n'en
+// a pas encore (ex. « Premium », 10 CHF par mois, TTC). Rejouable sans doublon. RÉSERVÉ AUX ADMINS.
+stripeRouter.post("/plans/sync", requireAuth, requireAdmin, async (_req, res) => {
+  const problem = stripeProblem();
+  if (problem) return res.status(503).json({ error: problem, code: "billing_unavailable" });
+
+  try {
+    res.json(await syncPlansToStripe());
+  } catch (err) {
+    const { type, code } = err as { type?: string; code?: string };
+    console.error(`Stripe plan sync failed: ${type ?? "unknown"} ${code ?? ""}`.trim());
+    // Le code de la base (« table absente ») est exploitable ; celui de Stripe ne contient pas la clé.
+    res.status(502).json({ error: "Could not sync the plans", detail: type ?? code ?? "unknown_error" });
   }
 });

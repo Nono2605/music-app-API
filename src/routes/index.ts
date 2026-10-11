@@ -10,6 +10,7 @@ import { creatorRouter } from "../modules/creator/routes";
 import { playsRouter } from "../modules/plays/routes";
 import { privacyRouter } from "../modules/privacy/routes";
 import { stripeRouter } from "../modules/stripe/routes";
+import { billingRouter } from "../modules/billing/routes";
 
 export const apiRouter = Router();
 
@@ -28,3 +29,4 @@ apiRouter.use("/subscriptions", subscriptionsRouter);
 apiRouter.use("/creator", creatorRouter);
 apiRouter.use("/plays", playsRouter);
 apiRouter.use("/stripe", stripeRouter);
+apiRouter.use("/billing", billingRouter);
