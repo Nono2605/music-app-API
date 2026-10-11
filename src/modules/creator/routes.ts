@@ -6,6 +6,8 @@ import { slugify, randomSuffix } from "../../lib/slugify";
 import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure } from "../../lib/audioProbe";
 import { syncTrackDuration } from "../../lib/syncTrackDuration";
 import { myArtistId } from "../../lib/myArtistId";
+import { classifyArtistInsertError } from "../../lib/artistName";
+import { checkArtistName } from "../../lib/artistNameCheck";
 import { creatorStatsRouter } from "./stats";
 
 export const creatorRouter = Router();
@@ -96,15 +98,28 @@ creatorRouter.get("/artist", async (req, res, next) => {
 });
 
 // POST /creator/artist — crée la page artiste (une seule par créateur).
+//
+// Le nom doit respecter les règles (lib/artistName.ts), ne pas être réservé et ne
+// pas être déjà pris : sans tenir compte des accents, des majuscules ni de
+// . - _ ' & !, donc « Rafale », « RAFALE » et « Rafalé! » sont le même nom.
+// L'unicité est aussi imposée par la base : si deux créateurs réservent le même nom
+// au même instant, le second reçoit la même réponse 409.
 creatorRouter.post("/artist", async (req, res, next) => {
   try {
-    const name = String(req.body?.name ?? "").trim();
-    if (name.length < 2) {
-      return res.status(400).json({ error: "name must be at least 2 characters" });
-    }
-
     const existingId = await myArtistId(req.auth!.id);
     if (existingId) return res.status(409).json({ error: "Artist profile already exists" });
+
+    const check = await checkArtistName(req.body?.name);
+    if (check.status === "invalid") {
+      return res.status(400).json({ error: check.message, code: `name_${check.code}` });
+    }
+    if (check.status === "reserved") {
+      return res.status(400).json({ error: check.message, code: "name_reserved" });
+    }
+    if (check.status === "taken") {
+      return res.status(409).json(takenResponse(check.message, check.suggestions));
+    }
+    const name = check.name;
 
     let slug = slugify(name);
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -115,10 +130,54 @@ creatorRouter.post("/artist", async (req, res, next) => {
         .single();
 
       if (!error) return res.status(201).json(data);
-      if (error.code !== "23505") throw error;
-      slug = `${slugify(name)}-${randomSuffix()}`;
+
+      switch (classifyArtistInsertError(error)) {
+        case "name_taken":
+          return res.status(409).json(takenResponse("This artist name is already taken.", []));
+        case "already_has_artist":
+          return res.status(409).json({ error: "Artist profile already exists" });
+        case "name_reserved":
+          return res.status(400).json({ error: "This name is reserved. Please choose another one.", code: "name_reserved" });
+        case "name_format":
+          return res.status(400).json({ error: "This name isn't valid.", code: "name_characters" });
+        case "slug_taken":
+          slug = `${slugify(name)}-${randomSuffix()}`;
+          break;
+        default:
+          throw error;
+      }
     }
     res.status(500).json({ error: "Could not allocate a unique slug" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Message de refus « nom pris » : les propositions sont dans le texte (le Studio
+// affiche le message tel quel) et aussi, structurées, dans `suggestions`.
+function takenResponse(message: string, suggestions: string[]) {
+  const hint = suggestions.length > 0 ? ` Try: ${suggestions.join(", ")}.` : "";
+  return { error: message + hint, code: "name_taken", suggestions };
+}
+
+// GET /creator/artist/name-check?name=… — ce nom est-il utilisable ? Sert à prévenir
+// le créateur avant l'envoi du formulaire. Son propre nom compte comme libre.
+creatorRouter.get("/artist/name-check", async (req, res, next) => {
+  try {
+    if (typeof req.query.name !== "string") {
+      return res.status(400).json({ error: "name is required" });
+    }
+    const check = await checkArtistName(req.query.name, await myArtistId(req.auth!.id));
+    if (check.status === "ok") {
+      return res.json({ available: true, name: check.name });
+    }
+    res.json({
+      available: false,
+      name: check.name,
+      reason: check.status === "invalid" ? `name_${check.code}` : `name_${check.status}`,
+      message: check.message,
+      suggestions: check.status === "taken" ? check.suggestions : [],
+    });
   } catch (err) {
     next(err);
   }

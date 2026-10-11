@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
+import { isMissingColumn } from "../../lib/schemaCompat";
 
 export const artistsRouter = Router();
 
@@ -12,12 +13,18 @@ artistsRouter.get("/", async (req, res, next) => {
     const offset = Number(req.query.offset ?? 0);
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
 
-    let query = supabaseAdmin.from("artists").select("id, name, slug, avatar_url, verified");
-    if (q) query = query.ilike("name", `%${q}%`);
+    // Un artiste anonymisé (compte supprimé) n'apparaît plus. Tant que la migration
+    // qui ajoute `anonymized_at` n'est pas appliquée, on retombe sur la requête
+    // d'avant plutôt que de répondre 500.
+    const run = (hideAnonymized: boolean) => {
+      let query = supabaseAdmin.from("artists").select("id, name, slug, avatar_url, verified");
+      if (hideAnonymized) query = query.is("anonymized_at", null);
+      if (q) query = query.ilike("name", `%${q}%`);
+      return query.order("name", { ascending: true }).range(offset, offset + limit - 1);
+    };
 
-    const { data, error } = await query
-      .order("name", { ascending: true })
-      .range(offset, offset + limit - 1);
+    let { data, error } = await run(true);
+    if (error && isMissingColumn(error)) ({ data, error } = await run(false));
 
     if (error) throw error;
     res.json({ data, limit, offset });
@@ -29,11 +36,17 @@ artistsRouter.get("/", async (req, res, next) => {
 // GET /artists/:slug — profil + discographie (morceaux publiés).
 artistsRouter.get("/:slug", async (req, res, next) => {
   try {
-    const { data: artist, error } = await supabaseAdmin
-      .from("artists")
-      .select("id, name, slug, bio, avatar_url, banner_url, verified")
-      .eq("slug", req.params.slug)
-      .maybeSingle();
+    const run = (hideAnonymized: boolean) => {
+      let query = supabaseAdmin
+        .from("artists")
+        .select("id, name, slug, bio, avatar_url, banner_url, verified")
+        .eq("slug", req.params.slug);
+      if (hideAnonymized) query = query.is("anonymized_at", null);
+      return query.maybeSingle();
+    };
+
+    let { data: artist, error } = await run(true);
+    if (error && isMissingColumn(error)) ({ data: artist, error } = await run(false));
 
     if (error) throw error;
     if (!artist) return res.status(404).json({ error: "Artist not found" });
