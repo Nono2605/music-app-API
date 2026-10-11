@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { parsePrivacyConfig } from "../lib/consents";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -28,6 +29,9 @@ export const env = {
   // Secret qui sale l'empreinte d'IP des lectures (lib/clientInfo.ts). Facultatif :
   // sans lui, plays.ip_hash reste vide (jamais d'empreinte non salée).
   ipHashSecret: process.env.IP_HASH_SECRET || undefined,
+  // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
+  // à demander (aucune par défaut : on ne demande rien d'inutile).
+  privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),
   corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())

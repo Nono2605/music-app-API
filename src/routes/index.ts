@@ -8,6 +8,7 @@ import { playlistsRouter } from "../modules/playlists/routes";
 import { subscriptionsRouter } from "../modules/subscriptions/routes";
 import { creatorRouter } from "../modules/creator/routes";
 import { playsRouter } from "../modules/plays/routes";
+import { privacyRouter } from "../modules/privacy/routes";
 
 export const apiRouter = Router();
 
@@ -16,6 +17,7 @@ apiRouter.get("/health", (_req, res) => {
 });
 
 apiRouter.use("/", usersRouter);
+apiRouter.use("/", privacyRouter);
 apiRouter.use("/artists", artistsRouter);
 apiRouter.use("/tracks", tracksRouter);
 apiRouter.use("/albums", albumsRouter);
