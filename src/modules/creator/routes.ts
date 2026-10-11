@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { isUnchangedDeclaration } from "../../lib/declaration";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { requireCreator } from "../../middleware/requireCreator";
@@ -808,6 +809,20 @@ creatorRouter.post("/tracks/:id/declaration", async (req, res, next) => {
       typeof req.body?.description === "string" && req.body.description.trim()
         ? req.body.description.trim()
         : null;
+
+    // Un « Save » répété sans rien changer ne crée pas de ligne : on renvoie la dernière
+    // déclaration telle quelle (200). Voir lib/declaration.ts.
+    const { data: latest, error: latestError } = await supabaseAdmin
+      .from("ai_declarations")
+      .select("id, provenance, ai_tool_names, description, status, declared_at")
+      .eq("track_id", track.id)
+      .order("declared_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestError) throw latestError;
+    if (latest && isUnchangedDeclaration(latest, { provenance, description })) {
+      return res.status(200).json(latest);
+    }
 
     const { data, error } = await supabaseAdmin
       .from("ai_declarations")
