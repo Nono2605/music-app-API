@@ -6,6 +6,7 @@ import { slugify, randomSuffix } from "../../lib/slugify";
 import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure } from "../../lib/audioProbe";
 import { syncTrackDuration } from "../../lib/syncTrackDuration";
 import { myArtistId } from "../../lib/myArtistId";
+import { trackReviewProblem, releaseReviewProblem } from "../../lib/reviewReadiness";
 import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
 import { creatorStatsRouter } from "./stats";
@@ -461,6 +462,27 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       if (!ALBUM_EDITABLE_STATUSES.has(req.body.status)) {
         return res.status(400).json({ error: "Invalid status" });
       }
+      // Une release part en relecture avec au moins un morceau, et de l'audio sur chacun.
+      if (req.body.status === "in_review" && album.status !== "in_review") {
+        const { data: albumTracks, error: tracksError } = await supabaseAdmin
+          .from("tracks")
+          .select("id, title")
+          .eq("album_id", album.id);
+        if (tracksError) throw tracksError;
+
+        const trackIds = albumTracks.map((t) => t.id);
+        let withAudio: string[] = [];
+        if (trackIds.length > 0) {
+          const { data: files, error: filesError } = await supabaseAdmin
+            .from("track_files")
+            .select("track_id")
+            .in("track_id", trackIds);
+          if (filesError) throw filesError;
+          withAudio = files.map((f) => f.track_id);
+        }
+        const problem = releaseReviewProblem(albumTracks, withAudio);
+        if (problem) return res.status(409).json({ error: problem });
+      }
       updates.status = req.body.status;
     }
 
@@ -616,6 +638,16 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       const wasPublished = track.status === "published" || track.published_at !== null;
       if (wasPublished && req.body.status !== "archived") {
         return res.status(409).json({ error: "A track that was published can only be archived" });
+      }
+      // Rien à relire sans audio : on ne soumet pas un morceau vide à l'administration.
+      if (req.body.status === "in_review" && track.status !== "in_review") {
+        const { count, error: filesError } = await supabaseAdmin
+          .from("track_files")
+          .select("id", { count: "exact", head: true })
+          .eq("track_id", track.id);
+        if (filesError) throw filesError;
+        const problem = trackReviewProblem(count ?? 0);
+        if (problem) return res.status(409).json({ error: problem });
       }
       updates.status = req.body.status;
     }
