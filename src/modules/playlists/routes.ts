@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
+import { addTrackOutcome } from "./addTrack";
 
 export const playlistsRouter = Router();
 
@@ -133,7 +134,7 @@ playlistsRouter.delete("/:id", requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /playlists/:id/tracks — ajoute en fin de playlist.
+// POST /playlists/:id/tracks — ajoute en fin de playlist. Répond { added } : false si le morceau y était déjà.
 playlistsRouter.post("/:id/tracks", requireAuth, async (req, res, next) => {
   try {
     const owned = await requireOwnedPlaylist(req.params.id, req.auth!.id);
@@ -160,8 +161,10 @@ playlistsRouter.post("/:id/tracks", requireAuth, async (req, res, next) => {
       added_by: req.auth!.id,
     });
 
-    if (error && error.code !== "23505") throw error;
-    res.status(204).end();
+    // 201 : ajouté ; 200 : le morceau était déjà dans la playlist (rien n'est dupliqué).
+    const outcome = addTrackOutcome(error);
+    if (outcome === "duplicate") return res.status(200).json({ added: false });
+    res.status(201).json({ added: true });
   } catch (err) {
     next(err);
   }
