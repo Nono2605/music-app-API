@@ -20,10 +20,14 @@ function failure(res: Response, err: unknown) {
   if (err instanceof BillingPlanError) return res.status(400).json({ error: err.message });
   if (err instanceof BillingConflictError) return res.status(409).json({ error: err.message });
   if (err instanceof BillingUnavailableError || err instanceof StripeNotConfiguredError) {
+    // La raison reste dans les journaux (ces messages ne contiennent jamais de clé) : le client,
+    // lui, ne voit qu'« indisponible ».
+    console.warn(`Billing unavailable: ${err.message}`);
     return res.status(503).json({ error: "Payments are not available yet", code: "billing_unavailable" });
   }
   const code = (err as { code?: string } | null)?.code;
   if (code && NOT_MIGRATED_CODES.has(code)) {
+    console.warn(`Billing unavailable: the billing tables are missing (${code})`);
     return res.status(503).json({ error: "Payments are not available yet", code: "billing_unavailable" });
   }
   const { type } = (err ?? {}) as { type?: string };
