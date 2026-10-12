@@ -16,3 +16,9 @@ export function isMissingFunction(err: unknown): boolean {
   const code = (err as PgError)?.code;
   return code === "42883" || code === "PGRST202";
 }
+
+// Table absente : Postgres 42P01, PostgREST PGRST205 (cache de schéma).
+export function isMissingTable(err: unknown): boolean {
+  const code = (err as PgError)?.code;
+  return code === "42P01" || code === "PGRST205";
+}

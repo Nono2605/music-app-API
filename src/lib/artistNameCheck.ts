@@ -7,7 +7,7 @@ import { suggestArtistNames, validateArtistName, type ArtistNameProblem } from "
 // majuscules ni de . - _ ' & !). Les contraintes de la base restent le dernier filet.
 
 export type NameCheck =
-  | { status: "ok"; name: string; degraded?: boolean }
+  | { status: "ok"; name: string; degraded?: boolean; similar?: SimilarName[] }
   | { status: "invalid"; name: string; code: ArtistNameProblem; message: string }
   | { status: "reserved"; name: string; message: string }
   | { status: "taken"; name: string; message: string; suggestions: string[] };
@@ -53,5 +53,44 @@ export async function checkArtistName(raw: unknown, excludeArtistId: string | nu
   if (status === "invalid") {
     return { status: "invalid", name: v.name, code: "characters", message: "This name isn't valid." };
   }
-  return { status: "ok", name: v.name };
+  return { status: "ok", name: v.name, similar: await similarNames(v.name, excludeArtistId) };
+}
+
+// Noms d'artistes qui RESSEMBLENT au nom demandé (fonction SQL similar_artist_names : similarité de
+// trigrammes sur la clé du nom). Avertissement seulement : plusieurs artistes peuvent légitimement
+// porter des noms proches, le risque est l'imitation d'un artiste connu. En cas d'erreur ou de migration
+// absente, on ne signale rien plutôt que de bloquer la création.
+export interface SimilarName {
+  artist_id: string;
+  name: string;
+  similarity: number;
+}
+
+export function toSimilarNames(rows: unknown): SimilarName[] {
+  if (!Array.isArray(rows)) return [];
+  const out: SimilarName[] = [];
+  for (const row of rows) {
+    const r = row as { artist_id?: unknown; name?: unknown; similarity?: unknown };
+    if (typeof r?.artist_id === "string" && typeof r.name === "string" && Number.isFinite(Number(r.similarity))) {
+      out.push({ artist_id: r.artist_id, name: r.name, similarity: Number(r.similarity) });
+    }
+  }
+  return out;
+}
+
+async function similarNames(name: string, excludeArtistId: string | null): Promise<SimilarName[]> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc("similar_artist_names", {
+      p_name: name,
+      p_exclude_artist: excludeArtistId,
+    });
+    if (error) {
+      if (!isMissingFunction(error)) console.error("similar_artist_names failed:", error.message);
+      return [];
+    }
+    return toSimilarNames(data);
+  } catch (err) {
+    console.error("similar_artist_names failed:", (err as { message?: string })?.message ?? err);
+    return [];
+  }
 }

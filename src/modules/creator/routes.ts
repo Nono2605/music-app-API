@@ -17,6 +17,8 @@ import { myArtistId } from "../../lib/myArtistId";
 import { trackReviewProblem, releaseReviewProblem } from "../../lib/reviewReadiness";
 import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
+import { DUPLICATE_FILE_MESSAGE, findForeignDuplicate } from "../../lib/duplicateFile";
+import { duplicateFileScan, nameSimilarityScans, recordScans } from "../../lib/scanLog";
 import { COVER_BUCKET, coverExtension, coverPath, ownCoverPath } from "../../lib/coverUrl";
 import { creatorStatsRouter } from "./stats";
 
@@ -138,7 +140,11 @@ creatorRouter.post("/artist", async (req, res, next) => {
         .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
         .single();
 
-      if (!error) return res.status(201).json(data);
+      if (!error) {
+        // Des noms proches existent : on le journalise pour la relecture, sans bloquer la création.
+        await recordScans(nameSimilarityScans(data.id, check.similar ?? []));
+        return res.status(201).json(data);
+      }
 
       switch (classifyArtistInsertError(error)) {
         case "name_taken":
@@ -178,7 +184,7 @@ creatorRouter.get("/artist/name-check", async (req, res, next) => {
     }
     const check = await checkArtistName(req.query.name, await myArtistId(req.auth!.id));
     if (check.status === "ok") {
-      return res.json({ available: true, name: check.name });
+      return res.json({ available: true, name: check.name, similar: (check.similar ?? []).map((match) => match.name) });
     }
     res.json({
       available: false,
@@ -957,6 +963,22 @@ creatorRouter.post("/tracks/:id/files", async (req, res, next) => {
     if (duplicate) {
       await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
       return res.status(409).json({ error: "This exact file is already attached to the track" });
+    }
+
+    // Le même fichier est déjà chez UN AUTRE artiste : copie probable. Refusé sans dire chez qui ; la
+    // tentative est journalisée (track_scans) pour la relecture.
+    const foreign = await findForeignDuplicate(probe.sha256, track.artist_id);
+    if (foreign) {
+      await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
+      await recordScans([
+        duplicateFileScan({
+          trackId: track.id,
+          artistId: track.artist_id,
+          matchedTrackId: foreign.trackId,
+          matchedFileId: foreign.trackFileId,
+        }),
+      ]);
+      return res.status(409).json({ error: DUPLICATE_FILE_MESSAGE, code: "duplicate_file" });
     }
 
     const { data, error } = await supabaseAdmin
