@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { isUnchangedDeclaration } from "../../lib/declaration";
+import { isDeclarableProvenance, provenanceError } from "../../lib/provenance";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { requireCreator } from "../../middleware/requireCreator";
@@ -22,7 +23,6 @@ creatorRouter.use(requireAuth);
 // automatiquement ici : un créateur déjà passé "creator" ne repasse pas par
 // /apply, ce sera à traiter séparément si besoin).
 const CREATOR_TERMS_VERSION = "2026-09-10";
-const CONTENT_PROVENANCE_VALUES = new Set(["human", "ai", "hybrid"]);
 
 // POST /creator/apply — passe le compte courant en rôle "creator" (self-serve,
 // pas de validation manuelle pendant la bêta). Exige l'acceptation des CGU
@@ -39,8 +39,8 @@ creatorRouter.post("/apply", async (req, res, next) => {
     if (acceptedTerms !== true) {
       return res.status(400).json({ error: "You must accept the Creator Terms of Service" });
     }
-    if (typeof contentProvenance !== "string" || !CONTENT_PROVENANCE_VALUES.has(contentProvenance)) {
-      return res.status(400).json({ error: "content_provenance must be one of human, ai, hybrid" });
+    if (!isDeclarableProvenance(contentProvenance)) {
+      return res.status(400).json({ error: provenanceError("content_provenance", contentProvenance) });
     }
     if (ownsRights !== true) {
       return res
@@ -770,8 +770,6 @@ creatorRouter.delete("/tracks/:id", async (req, res, next) => {
   }
 });
 
-const PROVENANCE_VALUES = new Set(["human", "ai", "hybrid"]);
-
 // GET /creator/tracks/:id/declaration — la déclaration de provenance IA la
 // plus récente (l'historique est conservé, jamais écrasé — cf. schéma).
 creatorRouter.get("/tracks/:id/declaration", async (req, res, next) => {
@@ -802,8 +800,8 @@ creatorRouter.post("/tracks/:id/declaration", async (req, res, next) => {
     if (!track) return res.status(404).json({ error: "Track not found" });
 
     const provenance = req.body?.provenance;
-    if (typeof provenance !== "string" || !PROVENANCE_VALUES.has(provenance)) {
-      return res.status(400).json({ error: "provenance must be one of human, ai, hybrid" });
+    if (!isDeclarableProvenance(provenance)) {
+      return res.status(400).json({ error: provenanceError("provenance", provenance) });
     }
     const description =
       typeof req.body?.description === "string" && req.body.description.trim()
