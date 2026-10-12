@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { isUnchangedDeclaration } from "../../lib/declaration";
-import { isDeclarableProvenance, provenanceError } from "../../lib/provenance";
+import {
+  declarationProblem,
+  isDeclarableProvenance,
+  latestDeclarations,
+  provenanceError,
+  releaseDeclarationProblem,
+} from "../../lib/provenance";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { requireCreator } from "../../middleware/requireCreator";
@@ -539,6 +545,15 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
         }
         const problem = releaseReviewProblem(albumTracks, withAudio);
         if (problem) return res.status(409).json({ error: problem });
+        // Même règle que pour un morceau : chaque morceau doit être déclaré 100 % IA.
+        const { data: declarations, error: declarationsError } = await supabaseAdmin
+          .from("ai_declarations")
+          .select("track_id, provenance, status, declared_at")
+          .in("track_id", trackIds)
+          .order("declared_at", { ascending: false });
+        if (declarationsError) throw declarationsError;
+        const declarationIssue = releaseDeclarationProblem(albumTracks, latestDeclarations(declarations ?? []));
+        if (declarationIssue) return res.status(409).json({ error: declarationIssue });
       }
       updates.status = req.body.status;
     }
@@ -718,6 +733,17 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
         if (filesError) throw filesError;
         const problem = trackReviewProblem(count ?? 0);
         if (problem) return res.status(409).json({ error: problem });
+        // Bêta 100 % IA : un morceau déclaré hybrid (ou sans déclaration) reste enregistré mais ne part pas en relecture.
+        const { data: latestDeclaration, error: declarationError } = await supabaseAdmin
+          .from("ai_declarations")
+          .select("provenance, status")
+          .eq("track_id", track.id)
+          .order("declared_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (declarationError) throw declarationError;
+        const declarationIssue = declarationProblem(latestDeclaration);
+        if (declarationIssue) return res.status(409).json({ error: declarationIssue });
       }
       updates.status = req.body.status;
     }
