@@ -4,26 +4,36 @@ export function notFoundHandler(req: Request, res: Response) {
   res.status(404).json({ error: `Not found: ${req.method} ${req.path}` });
 }
 
-// Les erreurs Postgrest/Supabase (`if (error) throw error`, utilisé dans
-// tous les modules) ne sont PAS des instances d'Error — juste des objets
-// { code, message, details, hint }. Sans ce cas, `err instanceof Error`
-// est faux et tout finissait en "Internal server error" générique, même
-// quand le message réel ("column X does not exist", violation de
-// contrainte, etc.) aurait été bien plus utile pour diagnostiquer.
-function extractMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (
-    typeof err === "object" &&
-    err !== null &&
-    "message" in err &&
-    typeof (err as { message: unknown }).message === "string"
-  ) {
-    return (err as { message: string }).message;
-  }
-  return "Internal server error";
+// Ce que le client voit d'une erreur NON prévue. Les erreurs Postgrest/Supabase (`if (error) throw
+// error`, utilisé dans tous les modules) sont de simples objets { code, message, details, hint } :
+// leur message cite des noms de tables, de colonnes ou de contraintes, qu'un visiteur n'a pas à
+// connaître. Le détail reste dans les journaux du serveur (Render) ; le client reçoit un message
+// générique. Les erreurs de lecture de la requête (JSON invalide, corps trop gros) viennent d'Express
+// avec un statut 4xx : elles gardent leur statut, avec un texte neutre.
+const CLIENT_ERRORS: Record<number, string> = {
+  400: "Invalid request",
+  413: "Request body too large",
+  415: "Unsupported content type",
+};
+
+export interface ErrorResponse {
+  status: number;
+  body: { error: string; code?: string };
 }
 
-export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
-  console.error(err);
-  res.status(500).json({ error: extractMessage(err) });
+export function errorResponse(err: unknown): ErrorResponse {
+  if (typeof err === "object" && err !== null) {
+    const { status, statusCode } = err as { status?: unknown; statusCode?: unknown };
+    const code = typeof status === "number" ? status : statusCode;
+    if (typeof code === "number" && code >= 400 && code < 500) {
+      return { status: code, body: { error: CLIENT_ERRORS[code] ?? "Request error" } };
+    }
+  }
+  return { status: 500, body: { error: "Internal server error", code: "internal_error" } };
+}
+
+export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+  const response = errorResponse(err);
+  if (response.status >= 500) console.error(err);
+  res.status(response.status).json(response.body);
 }
