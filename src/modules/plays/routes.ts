@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/auth";
 import { clock } from "../../lib/clock";
 import { env } from "../../config/env";
 import { parseClientInfo } from "../../lib/clientInfo";
+import { clientHeadersFor } from "../../lib/webappAuth";
 import { loadEntitlement } from "../../lib/loadEntitlement";
 import { signedStreamUrl } from "../../lib/streamUrl";
 import { applyHeartbeat, HEARTBEAT_EVERY_SECONDS, type HeartbeatState } from "./heartbeat";
@@ -107,8 +108,9 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
 
     const now = clock.now();
     const entitlement = await loadEntitlement(userId, now);
-    // Pays, appareil, empreinte d'IP : transmis par la webapp (lib/clientInfo.ts).
-    const client = parseClientInfo(req.headers, { ipHashSecret: env.ipHashSecret, now });
+    // Pays, appareil, empreinte d'IP : transmis par la webapp (lib/clientInfo.ts). Si un secret partagé est défini
+    // (lib/webappAuth.ts), on ne les croit que d'une requête qui le présente.
+    const client = parseClientInfo(clientHeadersFor(req.headers, env.webappSharedSecret), { ipHashSecret: env.ipHashSecret, now });
 
     const insert = () =>
       supabaseAdmin

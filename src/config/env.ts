@@ -29,6 +29,9 @@ export const env = {
   // Secret qui sale l'empreinte d'IP des lectures (lib/clientInfo.ts). Facultatif :
   // sans lui, plays.ip_hash reste vide (jamais d'empreinte non salée).
   ipHashSecret: process.env.IP_HASH_SECRET || undefined,
+  // Secret partagé avec l'app auditeur (lib/webappAuth.ts). Facultatif : sans lui, les en-têtes de pays,
+  // d'appareil et d'IP envoyés par n'importe quel appelant sont crus (comportement d'avant).
+  webappSharedSecret: process.env.WEBAPP_SHARED_SECRET?.trim() || undefined,
   // Stripe (lib/stripe.ts). La clé vient UNIQUEMENT de l'environnement (Render), jamais du
   // code ni d'un dépôt. Une clé « live » est refusée tant que STRIPE_ALLOW_LIVE n'est pas « yes ».
   stripeSecretKey: process.env.STRIPE_SECRET_KEY?.trim() || undefined,
