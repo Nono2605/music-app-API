@@ -109,3 +109,34 @@ export function checkoutUrls(base: string | undefined): { success: string; cance
     account: `${value}/account`,
   };
 }
+
+// --- Propriétaire d'un abonnement ou d'un paiement, quand le compte a pu être supprimé ---------------
+//
+// Quand un compte est supprimé, Vynl annule son abonnement chez Stripe ; Stripe envoie ensuite des
+// événements (customer.subscription.deleted…) pour un abonnement dont le compte n'existe plus : la ligne
+// `subscriptions` existe encore (son user_id est passé à null), mais `billing_customers` a disparu et la
+// métadonnée de l'abonnement cite un compte inexistant. Ces deux fonctions décident quoi faire sans jamais
+// réécrire un user_id vers un compte supprimé (clé étrangère), ni échouer en boucle.
+
+export type SubscriptionOwner = { action: "keep" } | { action: "set"; userId: string } | { action: "none" };
+
+// Ligne `subscriptions` déjà là : on ne touche pas à son propriétaire (null = compte supprimé : il le reste).
+// Pas de ligne : le propriétaire indiqué par Stripe, s'il y en a un.
+export function subscriptionOwner(
+  existing: { user_id: string | null } | null,
+  claimedUserId: string | null | undefined
+): SubscriptionOwner {
+  if (existing) return { action: "keep" };
+  return claimedUserId ? { action: "set", userId: claimedUserId } : { action: "none" };
+}
+
+// Le compte d'un paiement. Un abonnement connu sans compte (supprimé) donne un paiement sans compte (null),
+// qui reste une pièce comptable ; ni abonnement ni compte : on ne sait pas à qui l'attribuer.
+export function paymentOwner(
+  subscription: { user_id: string | null } | null,
+  customerUserId: string | null
+): { known: true; userId: string | null } | { known: false } {
+  const userId = subscription?.user_id ?? customerUserId;
+  if (userId) return { known: true, userId };
+  return subscription ? { known: true, userId: null } : { known: false };
+}

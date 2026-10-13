@@ -6,7 +6,9 @@ import {
   invoiceSubscriptionId,
   invoiceToPayment,
   mapSubscriptionStatus,
+  paymentOwner,
   paymentStatus,
+  subscriptionOwner,
   subscriptionPeriod,
   subscriptionPriceId,
 } from "./billingMap";
@@ -212,6 +214,12 @@ export async function createPortal(userId: string): Promise<string> {
 
 type Outcome = "processed" | "ignored";
 
+async function userExists(userId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin.from("users").select("id").eq("id", userId).maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
 async function findSubscriptionRow(providerSubscriptionId: string): Promise<{ id: string; user_id: string | null; plan: string } | null> {
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
@@ -231,13 +239,16 @@ async function syncSubscription(subscriptionId: string): Promise<Outcome> {
   if (!status) return "ignored"; // premier paiement pas encore réussi
 
   const customerId = idOf(sub.customer);
-  const userId = sub.metadata?.user_id || (await userIdForCustomer(customerId));
-  if (!userId) throw new Error(`No Vynl account for subscription ${sub.id}`);
+  const existing = await findSubscriptionRow(sub.id);
+  const owner = subscriptionOwner(existing, sub.metadata?.user_id || (await userIdForCustomer(customerId)));
+  if (owner.action === "none") throw new Error(`No Vynl account for subscription ${sub.id}`);
+  // Un compte supprimé depuis (annulation faite à sa suppression) : rien à écrire pour lui.
+  if (owner.action === "set" && !(await userExists(owner.userId))) return "ignored";
 
   const plan = await findPlanByPriceId(subscriptionPriceId(sub));
   const period = subscriptionPeriod(sub);
+  // Sans user_id : le propriétaire ne change jamais pour une ligne existante (null = compte supprimé).
   const row = {
-    user_id: userId,
     plan: plan?.code ?? sub.metadata?.plan ?? "unknown",
     status,
     provider: "stripe",
@@ -247,14 +258,13 @@ async function syncSubscription(subscriptionId: string): Promise<Outcome> {
     cancel_at_period_end: sub.cancel_at_period_end,
   };
 
-  const existing = await findSubscriptionRow(sub.id);
   if (existing) {
     const { error } = await supabaseAdmin.from("subscriptions").update(row).eq("id", existing.id);
     if (error) throw error;
     return "processed";
   }
 
-  const { error } = await supabaseAdmin.from("subscriptions").insert(row);
+  const { error } = await supabaseAdmin.from("subscriptions").insert({ ...row, user_id: (owner as { userId: string }).userId });
   if (error?.code === UNIQUE_VIOLATION) {
     // Deux événements pour le même abonnement en même temps : l'autre a gagné, on met à jour.
     const { error: retryError } = await supabaseAdmin
@@ -327,10 +337,12 @@ async function recordInvoicePaid(invoiceId: string): Promise<Outcome> {
     subscription = await findSubscriptionRow(subscriptionId);
   }
 
-  const userId = subscription?.user_id ?? (await userIdForCustomer(idOf(invoice.customer)));
-  // Pas de compte trouvé : on échoue, Stripe réessaiera (l'événement de l'abonnement ou du
-  // paiement Checkout aura peut-être eu le temps d'arriver).
-  if (!userId) throw new Error(`No Vynl account for invoice ${invoiceId}`);
+  const owner = paymentOwner(subscription, await userIdForCustomer(idOf(invoice.customer)));
+  // Ni abonnement ni compte trouvé : on échoue, Stripe réessaiera (l'événement de l'abonnement ou du
+  // paiement Checkout aura peut-être eu le temps d'arriver). Un abonnement connu dont le compte a été
+  // supprimé donne un paiement SANS compte : la pièce comptable est conservée.
+  if (!owner.known) throw new Error(`No Vynl account for invoice ${invoiceId}`);
+  const userId = owner.userId;
 
   const extra = await fetchChargeAndFee(fields.provider_payment_id);
   const { error } = await supabaseAdmin.from("payments").insert({
@@ -401,4 +413,34 @@ export async function processStripeEvent(event: Stripe.Event): Promise<Outcome> 
     default:
       return "ignored";
   }
+}
+
+// --- Suppression de compte ------------------------------------------------------------------------
+
+// Annule IMMÉDIATEMENT les abonnements Stripe encore actifs d'un compte qu'on va supprimer, pour qu'aucun
+// prélèvement ne suive. Rend leur nombre. Lève si une annulation échoue (on ne supprime alors pas le compte).
+// Pas de remboursement du temps restant : la suppression est le choix de l'utilisateur ; un geste commercial
+// reste possible à la main. Un abonnement déjà annulé chez Stripe n'est pas une erreur.
+export async function cancelLiveSubscriptions(userId: string): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from("subscriptions")
+    .select("provider_subscription_id")
+    .eq("user_id", userId)
+    .eq("provider", "stripe")
+    .in("status", ["active", "trialing", "past_due"])
+    .not("provider_subscription_id", "is", null);
+  if (error) throw error;
+
+  let cancelled = 0;
+  for (const row of data ?? []) {
+    try {
+      await getStripe().subscriptions.cancel(row.provider_subscription_id as string);
+      cancelled += 1;
+    } catch (err) {
+      const { code } = (err ?? {}) as { code?: string };
+      if (code === "resource_missing") continue; // déjà annulé ou disparu chez Stripe
+      throw err;
+    }
+  }
+  return cancelled;
 }

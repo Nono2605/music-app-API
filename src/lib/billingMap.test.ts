@@ -7,7 +7,9 @@ import {
   invoiceSubscriptionId,
   invoiceToPayment,
   mapSubscriptionStatus,
+  paymentOwner,
   paymentStatus,
+  subscriptionOwner,
   subscriptionPeriod,
   subscriptionPriceId,
   toIso,
@@ -154,5 +156,36 @@ describe("checkoutUrls", () => {
     for (const bad of [undefined, "", "   ", "app.vynl.com", "javascript:alert(1)", "ftp://x"]) {
       assert.equal(checkoutUrls(bad), null, String(bad));
     }
+  });
+});
+
+describe("subscriptionOwner (compte peut-être supprimé)", () => {
+  it("une ligne existe déjà : on ne touche pas à son propriétaire, même s'il est null (compte supprimé)", () => {
+    assert.deepEqual(subscriptionOwner({ user_id: "u1" }, "u1"), { action: "keep" });
+    assert.deepEqual(subscriptionOwner({ user_id: null }, "ancien-compte"), { action: "keep" });
+  });
+  it("pas de ligne : le propriétaire annoncé par Stripe", () => {
+    assert.deepEqual(subscriptionOwner(null, "u1"), { action: "set", userId: "u1" });
+  });
+  it("ni ligne ni propriétaire : aucun", () => {
+    assert.deepEqual(subscriptionOwner(null, null), { action: "none" });
+    assert.deepEqual(subscriptionOwner(null, undefined), { action: "none" });
+    assert.deepEqual(subscriptionOwner(null, ""), { action: "none" });
+  });
+});
+
+describe("paymentOwner (compte peut-être supprimé)", () => {
+  it("l'abonnement connaît son compte", () => {
+    assert.deepEqual(paymentOwner({ user_id: "u1" }, null), { known: true, userId: "u1" });
+  });
+  it("sinon, le compte du client Stripe", () => {
+    assert.deepEqual(paymentOwner(null, "u2"), { known: true, userId: "u2" });
+    assert.deepEqual(paymentOwner({ user_id: null }, "u2"), { known: true, userId: "u2" });
+  });
+  it("abonnement connu dont le compte a été supprimé : paiement conservé, sans compte", () => {
+    assert.deepEqual(paymentOwner({ user_id: null }, null), { known: true, userId: null });
+  });
+  it("ni abonnement ni compte : inconnu (Stripe réessaiera)", () => {
+    assert.deepEqual(paymentOwner(null, null), { known: false });
   });
 });

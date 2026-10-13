@@ -12,6 +12,7 @@ import { privacyRouter } from "../modules/privacy/routes";
 import { stripeRouter } from "../modules/stripe/routes";
 import { billingRouter } from "../modules/billing/routes";
 import { rateLimit } from "../lib/rateLimit";
+import { accountRouter } from "../modules/privacy/account";
 import { creatorGenreRouter } from "../modules/creator/genre";
 import { genresRouter } from "../modules/genres/routes";
 
@@ -40,11 +41,16 @@ apiRouter.post(
   ],
   perMinute(30)
 );
+// Export et suppression de compte : lourds ou irréversibles, donc très peu par heure.
+const perHour = (max: number) => rateLimit({ windowMs: 3_600_000, max });
+apiRouter.get("/me/export", perHour(5));
+apiRouter.post("/me/delete", perHour(5));
 apiRouter.use("/billing", perMinute(10)); // chaque appel crée des objets chez Stripe
 apiRouter.use("/stripe", perMinute(30));
 
 apiRouter.use("/", usersRouter);
 apiRouter.use("/", privacyRouter);
+apiRouter.use("/", accountRouter);
 apiRouter.use("/artists", artistsRouter);
 apiRouter.use("/genres", genresRouter);
 apiRouter.use("/tracks", tracksRouter);
