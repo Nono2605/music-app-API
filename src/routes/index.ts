@@ -12,6 +12,8 @@ import { privacyRouter } from "../modules/privacy/routes";
 import { stripeRouter } from "../modules/stripe/routes";
 import { billingRouter } from "../modules/billing/routes";
 import { rateLimit } from "../lib/rateLimit";
+import { creatorGenreRouter } from "../modules/creator/genre";
+import { genresRouter } from "../modules/genres/routes";
 
 export const apiRouter = Router();
 
@@ -44,11 +46,14 @@ apiRouter.use("/stripe", perMinute(30));
 apiRouter.use("/", usersRouter);
 apiRouter.use("/", privacyRouter);
 apiRouter.use("/artists", artistsRouter);
+apiRouter.use("/genres", genresRouter);
 apiRouter.use("/tracks", tracksRouter);
 apiRouter.use("/albums", albumsRouter);
 apiRouter.use("/library", libraryRouter);
 apiRouter.use("/playlists", playlistsRouter);
 apiRouter.use("/subscriptions", subscriptionsRouter);
+// Le genre d'un morceau : routes à part, montées avant le routeur principal.
+apiRouter.use("/creator", creatorGenreRouter);
 apiRouter.use("/creator", creatorRouter);
 apiRouter.use("/plays", playsRouter);
 apiRouter.use("/stripe", stripeRouter);

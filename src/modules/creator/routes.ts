@@ -19,6 +19,7 @@ import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
 import { DUPLICATE_FILE_MESSAGE, findForeignDuplicate } from "../../lib/duplicateFile";
 import { duplicateFileScan, nameSimilarityScans, recordScans } from "../../lib/scanLog";
+import { genreProblem, readTrackGenre, readTrackGenres, releaseGenreProblem } from "../../lib/genres";
 import { COVER_BUCKET, coverExtension, coverPath, ownCoverPath } from "../../lib/coverUrl";
 import { creatorStatsRouter } from "./stats";
 
@@ -560,6 +561,12 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
         if (declarationsError) throw declarationsError;
         const declarationIssue = releaseDeclarationProblem(albumTracks, latestDeclarations(declarations ?? []));
         if (declarationIssue) return res.status(409).json({ error: declarationIssue });
+        // Et un genre sur chaque morceau (sans blocage avant la migration des genres).
+        const genres = await readTrackGenres(trackIds);
+        const genreIssue = genres
+          ? releaseGenreProblem(albumTracks.map((t) => ({ title: t.title, genre_code: genres.get(t.id) ?? null })))
+          : null;
+        if (genreIssue) return res.status(409).json({ error: genreIssue });
       }
       updates.status = req.body.status;
     }
@@ -750,6 +757,11 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
         if (declarationError) throw declarationError;
         const declarationIssue = declarationProblem(latestDeclaration);
         if (declarationIssue) return res.status(409).json({ error: declarationIssue });
+        // Genre (liste fermée) : exigé pour pouvoir dire quels styles sont écoutés. Pas de blocage tant que
+        // la migration des genres n'est pas appliquée (la colonne n'existe pas : undefined).
+        const trackGenre = await readTrackGenre(track.id);
+        const genreIssue = trackGenre === undefined ? null : genreProblem(trackGenre);
+        if (genreIssue) return res.status(409).json({ error: genreIssue });
       }
       updates.status = req.body.status;
     }
