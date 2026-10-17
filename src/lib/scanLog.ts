@@ -36,6 +36,43 @@ export async function recordScans(records: ScanRecord[], db: ScanDb = supabaseAd
   }
 }
 
+// Un artiste qui change de nom (nom en attente ou refusé) rend caducs les contrôles de ressemblance de
+// l'ancien nom : on les clôt, avec la raison, pour que l'administration ne relise pas un nom qui n'existe
+// plus. Une décision se prend une fois (la base la verrouille) ; celle-ci n'est pas humaine : pas de
+// `decided_by`, et la note le dit. Écriture « au mieux », comme le reste du journal.
+export interface ScanUpdateDb {
+  from(table: string): {
+    update(values: unknown): {
+      eq(column: string, value: unknown): {
+        eq(column: string, value: unknown): { is(column: string, value: null): PromiseLike<{ error: unknown }> };
+      };
+    };
+  };
+}
+
+export async function supersedeNameScans(
+  artistId: string,
+  db: ScanUpdateDb = supabaseAdmin as unknown as ScanUpdateDb
+): Promise<void> {
+  try {
+    const { error } = await db
+      .from("track_scans")
+      .update({
+        decision: "dismissed",
+        decided_at: new Date().toISOString(),
+        decision_note: "Superseded: the artist chose another name.",
+      })
+      .eq("artist_id", artistId)
+      .eq("check_kind", "name_similarity")
+      .is("decision", null);
+    if (error && !isMissingTable(error)) {
+      console.error("Could not close the old name checks:", (error as { message?: string }).message ?? error);
+    }
+  } catch (err) {
+    console.error("Could not close the old name checks:", (err as { message?: string })?.message ?? err);
+  }
+}
+
 // Un fichier identique à celui d'un autre artiste a été refusé à l'envoi.
 export function duplicateFileScan(input: {
   trackId: string;

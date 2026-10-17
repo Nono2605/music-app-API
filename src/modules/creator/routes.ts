@@ -17,8 +17,16 @@ import { myArtistId } from "../../lib/myArtistId";
 import { trackReviewProblem, releaseReviewProblem } from "../../lib/reviewReadiness";
 import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
+import {
+  canRenameArtist,
+  nameReviewProblem,
+  statusForNewName,
+  withNameReview,
+  type NameStatus,
+} from "../../lib/artistNameReview";
+import { isMissingColumn } from "../../lib/schemaCompat";
 import { DUPLICATE_FILE_MESSAGE, findForeignDuplicate } from "../../lib/duplicateFile";
-import { duplicateFileScan, nameSimilarityScans, recordScans } from "../../lib/scanLog";
+import { duplicateFileScan, nameSimilarityScans, recordScans, supersedeNameScans } from "../../lib/scanLog";
 import { genreProblem, readTrackGenre, readTrackGenres, releaseGenreProblem } from "../../lib/genres";
 import {
   ARTIST_IMAGE_BUCKET,
@@ -103,21 +111,58 @@ creatorRouter.use(requireCreator);
 // Statistiques de lecture : GET /creator/stats (voir stats.ts).
 creatorRouter.use("/stats", creatorStatsRouter);
 
-// GET /creator/artist — la page artiste du créateur connecté (ou null).
+const ARTIST_COLUMNS = "id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified";
+const ARTIST_COLUMNS_WITH_REVIEW = `${ARTIST_COLUMNS}, name_status, name_review_note`;
+
+interface MyArtist {
+  id: string;
+  name: string;
+  slug: string;
+  name_status: NameStatus;
+  name_review_note: string | null;
+  [key: string]: unknown;
+}
+
+type PgFailure = { code?: string; message?: string } | null;
+
+// La page artiste du compte, avec le statut de son nom (migration 20261017000000). Tant qu'elle n'est pas
+// appliquée, les colonnes manquent : on relit sans elles et tous les noms comptent comme acceptés.
+async function readMyArtist(userId: string): Promise<MyArtist | null> {
+  const run = (columns: string) =>
+    supabaseAdmin.from("artists").select(columns).eq("user_id", userId).maybeSingle() as unknown as PromiseLike<{
+      data: Record<string, unknown> | null;
+      error: PgFailure;
+    }>;
+  let { data, error } = await run(ARTIST_COLUMNS_WITH_REVIEW);
+  if (error && isMissingColumn(error)) ({ data, error } = await run(ARTIST_COLUMNS));
+  if (error) throw error;
+  return data ? (withNameReview(data) as MyArtist) : null;
+}
+
+// GET /creator/artist — la page artiste du créateur connecté (ou null), avec le statut de son nom :
+// « approved », « pending » (l'administration doit trancher) ou « rejected » (avec le motif).
 creatorRouter.get("/artist", async (req, res, next) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("artists")
-      .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
-      .eq("user_id", req.auth!.id)
-      .maybeSingle();
-
-    if (error) throw error;
-    res.json(data);
+    res.json(await readMyArtist(req.auth!.id));
   } catch (err) {
     next(err);
   }
 });
+
+// Pourquoi cet artiste ne peut pas encore soumettre de musique (nom en attente ou refusé), ou null.
+// Sans la migration des noms, la colonne manque : personne n'est bloqué.
+async function artistNameProblem(artistId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("artists")
+    .select("name_status, name_review_note")
+    .eq("id", artistId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingColumn(error)) return null;
+    throw error;
+  }
+  return nameReviewProblem(data?.name_status, data?.name_review_note);
+}
 
 // POST /creator/artist — crée la page artiste (une seule par créateur).
 //
@@ -142,19 +187,31 @@ creatorRouter.post("/artist", async (req, res, next) => {
       return res.status(409).json(takenResponse(check.message, check.suggestions));
     }
     const name = check.name;
+    // Un nom proche d'un autre attend la décision de l'administration (page non publique, aucune release
+    // soumise d'ici là) ; sinon il est accepté tout de suite.
+    const nameStatus = statusForNewName(check.similar?.length ?? 0);
+
+    // Avant la migration de la relecture des noms, la colonne manque : on crée alors sans statut.
+    const insertArtist = (name: string, slug: string, withReview: boolean) =>
+      supabaseAdmin
+        .from("artists")
+        .insert(
+          withReview
+            ? { user_id: req.auth!.id, name, slug, name_status: nameStatus }
+            : { user_id: req.auth!.id, name, slug }
+        )
+        .select(withReview ? ARTIST_COLUMNS_WITH_REVIEW : ARTIST_COLUMNS)
+        .single() as unknown as PromiseLike<{ data: Record<string, unknown> | null; error: PgFailure }>;
 
     let slug = slugify(name);
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { data, error } = await supabaseAdmin
-        .from("artists")
-        .insert({ user_id: req.auth!.id, name, slug })
-        .select("id, catalog_code, name, slug, bio, avatar_url, banner_url, country, verified")
-        .single();
+      let { data, error } = await insertArtist(name, slug, true);
+      if (error && isMissingColumn(error)) ({ data, error } = await insertArtist(name, slug, false));
 
-      if (!error) {
-        // Des noms proches existent : on le journalise pour la relecture, sans bloquer la création.
-        await recordScans(nameSimilarityScans(data.id, check.similar ?? []));
-        return res.status(201).json(data);
+      if (!error && data) {
+        // Des noms proches existent : on le journalise pour la relecture.
+        await recordScans(nameSimilarityScans(String(data.id), check.similar ?? []));
+        return res.status(201).json(withNameReview(data));
       }
 
       switch (classifyArtistInsertError(error)) {
@@ -204,6 +261,80 @@ creatorRouter.get("/artist/name-check", async (req, res, next) => {
       message: check.message,
       suggestions: check.status === "taken" ? check.suggestions : [],
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /creator/artist/name — choisir un autre nom d'artiste, tant que le nom actuel est en attente de
+// relecture ou refusé. Un nom accepté est permanent : il figure sur le catalogue, les relevés et les pages
+// publiques. Le nouveau nom passe les mêmes contrôles qu'à la création ; s'il ressemble à un autre, il
+// attend à son tour la décision de l'administration. Le lien de la page (slug) suit le nom : l'artiste n'a
+// encore rien de publié.
+creatorRouter.patch("/artist/name", async (req, res, next) => {
+  try {
+    const artist = await readMyArtist(req.auth!.id);
+    if (!artist) return res.status(404).json({ error: "Artist profile not found" });
+    if (!canRenameArtist(artist.name_status)) {
+      return res
+        .status(409)
+        .json({ error: "Your artist name is approved: it is permanent and can't be changed.", code: "name_permanent" });
+    }
+
+    const check = await checkArtistName(req.body?.name, artist.id);
+    if (check.status === "invalid") {
+      return res.status(400).json({ error: check.message, code: `name_${check.code}` });
+    }
+    if (check.status === "reserved") {
+      return res.status(400).json({ error: check.message, code: "name_reserved" });
+    }
+    if (check.status === "taken") {
+      return res.status(409).json(takenResponse(check.message, check.suggestions));
+    }
+    const name = check.name;
+    if (name === artist.name) {
+      return res.status(400).json({ error: "This is already your artist name.", code: "name_unchanged" });
+    }
+    const nameStatus = statusForNewName(check.similar?.length ?? 0);
+
+    let slug = slugify(name);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // Le filtre sur le statut garde contre une décision prise entre-temps : un nom approuvé ne change plus.
+      const { data, error } = (await supabaseAdmin
+        .from("artists")
+        .update({ name, slug, name_status: nameStatus, name_review_note: null, name_reviewed_at: null })
+        .eq("id", artist.id)
+        .in("name_status", ["pending", "rejected"])
+        .select(ARTIST_COLUMNS_WITH_REVIEW)
+        .maybeSingle()) as unknown as { data: Record<string, unknown> | null; error: PgFailure };
+
+      if (!error) {
+        if (!data) {
+          return res.status(409).json({
+            error: "Your artist name was approved in the meantime: it is permanent and can't be changed.",
+            code: "name_permanent",
+          });
+        }
+        await supersedeNameScans(artist.id);
+        await recordScans(nameSimilarityScans(artist.id, check.similar ?? []));
+        return res.json(withNameReview(data));
+      }
+
+      switch (classifyArtistInsertError(error)) {
+        case "name_taken":
+          return res.status(409).json(takenResponse("This artist name is already taken.", []));
+        case "name_reserved":
+          return res.status(400).json({ error: "This name is reserved. Please choose another one.", code: "name_reserved" });
+        case "name_format":
+          return res.status(400).json({ error: "This name isn't valid.", code: "name_characters" });
+        case "slug_taken":
+          slug = `${slugify(name)}-${randomSuffix()}`;
+          break;
+        default:
+          throw error;
+      }
+    }
+    res.status(500).json({ error: "Could not allocate a unique slug" });
   } catch (err) {
     next(err);
   }
@@ -599,6 +730,10 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       }
       // Une release part en relecture avec au moins un morceau, et de l'audio sur chacun.
       if (req.body.status === "in_review" && album.status !== "in_review") {
+        // Un nom d'artiste en attente de relecture ou refusé bloque l'envoi (voir artistNameProblem).
+        const nameIssue = await artistNameProblem(album.artist_id);
+        if (nameIssue) return res.status(409).json({ error: nameIssue });
+
         const { data: albumTracks, error: tracksError } = await supabaseAdmin
           .from("tracks")
           .select("id, title")
@@ -804,6 +939,10 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
       }
       // Rien à relire sans audio : on ne soumet pas un morceau vide à l'administration.
       if (req.body.status === "in_review" && track.status !== "in_review") {
+        // Un nom d'artiste en attente de relecture ou refusé bloque l'envoi (voir artistNameProblem).
+        const nameIssue = await artistNameProblem(track.artist_id);
+        if (nameIssue) return res.status(409).json({ error: nameIssue });
+
         const { count, error: filesError } = await supabaseAdmin
           .from("track_files")
           .select("id", { count: "exact", head: true })
