@@ -3,8 +3,7 @@
 // Fonctions pures qui nettoient et vérifient ce qui vient du client (jamais rien de fiable), testées avec
 // `npm test`. L'existence d'un genre ou d'un artiste lié se vérifie ensuite en base.
 
-// Même forme que GENRE_CODE dans lib/genres.ts (non importé : ce module reste pur, sans client Supabase).
-const GENRE_CODE = /^[a-z][a-z0-9_]{1,30}$/;
+import { GENRE_CODE } from "./genreCode";
 
 export const MAX_GENRES = 3;
 export const MAX_TAGS = 5;

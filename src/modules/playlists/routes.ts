@@ -3,6 +3,8 @@ import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { addTrackOutcome } from "./addTrack";
 import { loadTrackProvenance } from "../../lib/loadProvenance";
+import { loadTrackMeta } from "../../lib/loadTrackMeta";
+import { metaFields } from "../../lib/trackMeta";
 import { isUuid } from "../albums/list";
 
 export const playlistsRouter = Router();
@@ -79,12 +81,17 @@ playlistsRouter.get("/:id", requireAuth, async (req, res, next) => {
     if (tracksError) throw tracksError;
 
     const tracks = playlistTracks.map((pt) => ({ ...(pt.tracks as unknown as { id: string }), position: pt.position }));
-    const provenance = await loadTrackProvenance(tracks.map((track) => track.id));
+    const ids = tracks.map((track) => track.id);
+    const [provenance, meta] = await Promise.all([loadTrackProvenance(ids), loadTrackMeta(ids)]);
 
     res.json({
       ...playlist,
       is_owner: isOwner,
-      tracks: tracks.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })),
+      tracks: tracks.map((track) => ({
+        ...track,
+        provenance: provenance.get(track.id) ?? null,
+        ...metaFields(meta.get(track.id)),
+      })),
     });
   } catch (err) {
     next(err);

@@ -6,7 +6,8 @@ import { supabaseAdmin } from "./supabaseAdmin";
 //  - la liste répond « indisponible » ;
 //  - le genre d'un morceau n'est pas exigé à l'envoi en relecture.
 
-export const GENRE_CODE = /^[a-z][a-z0-9_]{1,30}$/;
+export { GENRE_CODE } from "./genreCode";
+import { GENRE_CODE } from "./genreCode";
 
 export type GenreInput = { ok: true; value: string | null } | { ok: false; error: string };
 
