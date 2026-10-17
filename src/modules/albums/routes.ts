@@ -1,13 +1,18 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { containsPattern, isUuid, parseListParams, toAlbumSummary, type AlbumRow } from "./list";
+import { loadTrackProvenance } from "../../lib/loadProvenance";
+import { albumProvenance } from "../../lib/publicProvenance";
+import { anyExplicit, hidesExplicit } from "../../lib/explicit";
 
 export const albumsRouter = Router();
 
 // GET /albums — catalogue public, paginé : albums publiés qui ont au moins un
 // morceau publié (une release vide mènerait à une page sans rien à écouter), les
 // plus récents d'abord. ?q= filtre par titre (recherche partielle, insensible à la casse) ;
-// ?artist_id= ne garde que les albums de cet artiste (page artiste).
+// ?artist_id= ne garde que les albums de cet artiste (page artiste) ;
+// ?explicit=false écarte les albums (et singles) dont un morceau est explicite : la page peut alors
+// contenir moins de `limit` albums.
 albumsRouter.get("/", async (req, res, next) => {
   try {
     const { limit, offset, q } = parseListParams(req.query);
@@ -23,7 +28,7 @@ albumsRouter.get("/", async (req, res, next) => {
     // publié existe, et ne renvoie que ces morceaux (on n'en garde que le nombre).
     let query = supabaseAdmin
       .from("albums")
-      .select("id, title, cover_url, release_date, type, artists(name, slug), tracks!inner(id)")
+      .select("id, title, cover_url, release_date, type, artists(name, slug), tracks!inner(id, explicit)")
       .eq("status", "published")
       .eq("tracks.status", "published");
 
@@ -36,7 +41,10 @@ albumsRouter.get("/", async (req, res, next) => {
       .range(offset, offset + limit - 1);
 
     if (error) throw error;
-    res.json({ data: (data as unknown as AlbumRow[]).map(toAlbumSummary), limit, offset });
+    const rows = data as unknown as AlbumRow[];
+    const byTrack = await loadTrackProvenance(rows.flatMap((row) => (row.tracks ?? []).map((track) => track.id)));
+    const visible = hidesExplicit(req.query) ? rows.filter((row) => !anyExplicit(row.tracks)) : rows;
+    res.json({ data: visible.map((row) => toAlbumSummary(row, byTrack)), limit, offset });
   } catch (err) {
     next(err);
   }
@@ -57,13 +65,22 @@ albumsRouter.get("/:id", async (req, res, next) => {
 
     const { data: tracks, error: tracksError } = await supabaseAdmin
       .from("tracks")
-      .select("id, title, slug, duration_seconds, track_number")
+      .select("id, title, slug, duration_seconds, track_number, explicit")
       .eq("album_id", album.id)
       .eq("status", "published")
       .order("track_number", { ascending: true });
 
     if (tracksError) throw tracksError;
-    res.json({ ...album, tracks });
+
+    // Provenance IA de chaque morceau, et de l'album (100 % IA seulement si tous le sont).
+    const byTrack = await loadTrackProvenance(tracks.map((track) => track.id));
+    const withProvenance = tracks.map((track) => ({ ...track, provenance: byTrack.get(track.id) ?? null }));
+    res.json({
+      ...album,
+      explicit: anyExplicit(tracks),
+      provenance: albumProvenance(withProvenance.map((track) => track.provenance)),
+      tracks: withProvenance,
+    });
   } catch (err) {
     next(err);
   }

@@ -81,4 +81,24 @@ describe("toAlbumSummary", () => {
     assert.equal(toAlbumSummary({ ...base, artists: null, tracks: null }).artists, null);
     assert.equal(toAlbumSummary({ ...base, artists: [], tracks: null }).track_count, 0);
   });
+
+  it("la provenance de l'album vient de ses morceaux", () => {
+    const row = { ...base, artists: null, tracks: [{ id: "t1" }, { id: "t2" }] };
+    const allAi = new Map([["t1", "ai" as const], ["t2", "ai" as const]]);
+    const mixed = new Map([["t1", "ai" as const], ["t2", "hybrid" as const]]);
+    assert.equal(toAlbumSummary(row, allAi).provenance, "ai");
+    assert.equal(toAlbumSummary(row, mixed).provenance, "hybrid");
+  });
+
+  it("un album est explicite dès qu'un de ses morceaux l'est", () => {
+    const row = { ...base, artists: null };
+    assert.equal(toAlbumSummary({ ...row, tracks: [{ id: "t1", explicit: false }, { id: "t2", explicit: true }] }).explicit, true);
+    assert.equal(toAlbumSummary({ ...row, tracks: [{ id: "t1", explicit: false }, { id: "t2" }] }).explicit, false);
+    assert.equal(toAlbumSummary({ ...row, tracks: null }).explicit, false);
+  });
+
+  it("sans information de provenance : pas de badge", () => {
+    assert.equal(toAlbumSummary({ ...base, artists: null, tracks: [{ id: "t1" }] }).provenance, null);
+    assert.equal(toAlbumSummary({ ...base, artists: null, tracks: null }).provenance, null);
+  });
 });

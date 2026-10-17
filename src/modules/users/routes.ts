@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
+import { parseListParams } from "../albums/list";
 
 export const usersRouter = Router();
 
@@ -78,6 +79,30 @@ usersRouter.post("/profile", requireAuth, async (req, res, next) => {
   }
 });
 
+// GET /me/follows — les artistes que l'utilisateur connecté suit, le plus récemment suivi d'abord.
+// Paginé : ?limit= (100 au plus), ?offset=.
+usersRouter.get("/me/follows", requireAuth, async (req, res, next) => {
+  try {
+    const { limit, offset } = parseListParams(req.query);
+    const { data, error } = await supabaseAdmin
+      .from("follows")
+      .select("created_at, artists(id, name, slug, avatar_url, verified)")
+      .eq("follower_id", req.auth!.id)
+      .not("artist_id", "is", null)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+
+    // PostgREST renvoie la relation many-to-one en objet ou en tableau d'un élément selon les types.
+    const artists = data
+      .map((row) => (Array.isArray(row.artists) ? (row.artists[0] ?? null) : row.artists))
+      .filter((artist) => artist !== null);
+    res.json({ data: artists, limit, offset });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /me/follows/:artistId — l'utilisateur connecté suit-il déjà cet artiste ?
 usersRouter.get("/me/follows/:artistId", requireAuth, async (req, res, next) => {
   try {
@@ -97,9 +122,8 @@ usersRouter.get("/me/follows/:artistId", requireAuth, async (req, res, next) => 
 
 // GET /users/:username — profil public. Playlists : toutes si on consulte
 // son propre profil (avec leur statut public/privé), sinon uniquement les
-// publiques. followers_count = qui me suit ; following_count = les autres
-// utilisateurs que je suis (les artistes suivis ne comptent pas ici, c'est
-// un concept séparé, cf. /artists/:id/follow).
+// publiques. followers_count = les utilisateurs qui me suivent ; following_count = tout ce
+// que je suis : des artistes (cf. /artists/:id/follow) et d'autres utilisateurs.
 usersRouter.get("/users/:username", requireAuth, async (req, res, next) => {
   try {
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -120,8 +144,7 @@ usersRouter.get("/users/:username", requireAuth, async (req, res, next) => {
       supabaseAdmin
         .from("follows")
         .select("id", { count: "exact", head: true })
-        .eq("follower_id", profile.user_id)
-        .not("followed_user_id", "is", null),
+        .eq("follower_id", profile.user_id),
       isOwner
         ? Promise.resolve(null)
         : supabaseAdmin

@@ -2,6 +2,8 @@ import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { addTrackOutcome } from "./addTrack";
+import { loadTrackProvenance } from "../../lib/loadProvenance";
+import { isUuid } from "../albums/list";
 
 export const playlistsRouter = Router();
 
@@ -65,18 +67,24 @@ playlistsRouter.get("/:id", requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: "Playlist not found" });
     }
 
+    // Seulement les morceaux publiés : un morceau retiré du catalogue (refusé, archivé) disparaît de la
+    // playlist au lieu d'y rester, illisible. La ligne reste en base : elle revient s'il est republié.
     const { data: playlistTracks, error: tracksError } = await supabaseAdmin
       .from("playlist_tracks")
-      .select("position, tracks(id, title, slug, duration_seconds, artists(name), albums(cover_url))")
+      .select("position, tracks!inner(id, title, slug, duration_seconds, explicit, artists(name), albums(cover_url))")
       .eq("playlist_id", playlist.id)
+      .eq("tracks.status", "published")
       .order("position", { ascending: true });
 
     if (tracksError) throw tracksError;
 
+    const tracks = playlistTracks.map((pt) => ({ ...(pt.tracks as unknown as { id: string }), position: pt.position }));
+    const provenance = await loadTrackProvenance(tracks.map((track) => track.id));
+
     res.json({
       ...playlist,
       is_owner: isOwner,
-      tracks: playlistTracks.map((pt) => ({ ...(pt.tracks as object), position: pt.position })),
+      tracks: tracks.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })),
     });
   } catch (err) {
     next(err);
@@ -142,6 +150,17 @@ playlistsRouter.post("/:id/tracks", requireAuth, async (req, res, next) => {
 
     const { track_id: trackId } = req.body ?? {};
     if (!trackId) return res.status(400).json({ error: "track_id is required" });
+    if (!isUuid(trackId)) return res.status(400).json({ error: "track_id must be a UUID" });
+
+    // Seul un morceau publié peut entrer dans une playlist (pas un brouillon ni un morceau refusé).
+    const { data: track, error: trackError } = await supabaseAdmin
+      .from("tracks")
+      .select("id")
+      .eq("id", trackId)
+      .eq("status", "published")
+      .maybeSingle();
+    if (trackError) throw trackError;
+    if (!track) return res.status(404).json({ error: "Track not found" });
 
     const { data: last, error: lastError } = await supabaseAdmin
       .from("playlist_tracks")

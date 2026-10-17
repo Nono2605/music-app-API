@@ -2,6 +2,8 @@ import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { requireAuth } from "../../middleware/auth";
 import { isMissingColumn } from "../../lib/schemaCompat";
+import { loadTrackProvenance } from "../../lib/loadProvenance";
+import { hidesExplicit } from "../../lib/explicit";
 
 export const artistsRouter = Router();
 
@@ -33,7 +35,7 @@ artistsRouter.get("/", async (req, res, next) => {
   }
 });
 
-// GET /artists/:slug — profil + discographie (morceaux publiés).
+// GET /artists/:slug — profil + discographie (morceaux publiés). ?explicit=false écarte les morceaux explicites.
 artistsRouter.get("/:slug", async (req, res, next) => {
   try {
     const run = (hideAnonymized: boolean) => {
@@ -51,15 +53,17 @@ artistsRouter.get("/:slug", async (req, res, next) => {
     if (error) throw error;
     if (!artist) return res.status(404).json({ error: "Artist not found" });
 
-    const { data: tracks, error: tracksError } = await supabaseAdmin
+    let tracksQuery = supabaseAdmin
       .from("tracks")
-      .select("id, title, slug, duration_seconds, albums(cover_url)")
+      .select("id, title, slug, duration_seconds, explicit, albums(cover_url)")
       .eq("artist_id", artist.id)
-      .eq("status", "published")
-      .order("published_at", { ascending: false });
+      .eq("status", "published");
+    if (hidesExplicit(req.query)) tracksQuery = tracksQuery.eq("explicit", false);
+    const { data: tracks, error: tracksError } = await tracksQuery.order("published_at", { ascending: false });
 
     if (tracksError) throw tracksError;
-    res.json({ ...artist, tracks });
+    const provenance = await loadTrackProvenance(tracks.map((track) => track.id));
+    res.json({ ...artist, tracks: tracks.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })) });
   } catch (err) {
     next(err);
   }

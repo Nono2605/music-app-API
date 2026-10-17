@@ -1,5 +1,8 @@
 // Paramètres et forme de réponse de GET /albums. Fonctions pures (testées sans base).
 
+import { anyExplicit } from "../../lib/explicit";
+import { albumProvenance, type PublicProvenance } from "../../lib/publicProvenance";
+
 export interface ListParams {
   limit: number;
   offset: number;
@@ -51,7 +54,7 @@ export interface AlbumRow {
   release_date: string | null;
   type: string;
   artists: OneOrMany<{ name: string; slug: string }>;
-  tracks: { id: string }[] | null;
+  tracks: { id: string; explicit?: boolean | null }[] | null;
 }
 
 export interface AlbumSummary {
@@ -62,11 +65,18 @@ export interface AlbumSummary {
   type: string;
   artists: { name: string; slug: string } | null;
   track_count: number;
+  /** Au moins un morceau publié est explicite (badge « E » de l'album ou du single). */
+  explicit: boolean;
+  /** « ai » si tous les morceaux sont déclarés 100 % IA, « hybrid » sinon ; null : pas de badge. */
+  provenance: PublicProvenance | null;
 }
 
 // Selon les types générés, PostgREST renvoie la relation many-to-one en objet ou
 // en tableau d'un élément : on accepte les deux et on renvoie toujours un objet.
-export function toAlbumSummary(row: AlbumRow): AlbumSummary {
+export function toAlbumSummary(
+  row: AlbumRow,
+  provenanceByTrack: ReadonlyMap<string, PublicProvenance | null> = new Map()
+): AlbumSummary {
   const artist = Array.isArray(row.artists) ? (row.artists[0] ?? null) : row.artists;
   return {
     id: row.id,
@@ -76,5 +86,7 @@ export function toAlbumSummary(row: AlbumRow): AlbumSummary {
     type: row.type,
     artists: artist,
     track_count: row.tracks?.length ?? 0,
+    explicit: anyExplicit(row.tracks),
+    provenance: albumProvenance((row.tracks ?? []).map((track) => provenanceByTrack.get(track.id) ?? null)),
   };
 }

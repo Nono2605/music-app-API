@@ -5,8 +5,8 @@ export interface FileDuration {
 
 /**
  * Durée que doit avoir un morceau d'après ses fichiers : celle du plus ancien,
- * qui est le fichier réellement streamé (GET /tracks/:id/stream trie par
- * created_at croissant).
+ * qui est le fichier réellement streamé (lib/streamUrl.ts, utilisé par POST /plays,
+ * trie par created_at croissant).
  *
  * - `null` : plus aucun fichier, la durée n'a plus de support.
  * - un nombre : la durée mesurée du plus ancien.

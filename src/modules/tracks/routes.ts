@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
-import { requireAuth } from "../../middleware/auth";
-import { signedStreamUrl } from "../../lib/streamUrl";
+import { loadTrackProvenance } from "../../lib/loadProvenance";
+import { hidesExplicit } from "../../lib/explicit";
 
 export const tracksRouter = Router();
 
 // GET /tracks — catalogue public, paginé, morceaux publiés uniquement.
-// ?q= filtre par titre (recherche partielle, insensible à la casse).
+// ?q= filtre par titre (recherche partielle, insensible à la casse) ;
+// ?explicit=false écarte les morceaux explicites (réglage de l'auditeur).
 tracksRouter.get("/", async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
@@ -15,17 +16,20 @@ tracksRouter.get("/", async (req, res, next) => {
 
     let query = supabaseAdmin
       .from("tracks")
-      .select("id, title, slug, duration_seconds, artists(name), albums(cover_url)")
+      .select("id, title, slug, duration_seconds, explicit, artists(name), albums(cover_url)")
       .eq("status", "published");
 
     if (q) query = query.ilike("title", `%${q}%`);
+    if (hidesExplicit(req.query)) query = query.eq("explicit", false);
 
     const { data, error } = await query
       .order("published_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) throw error;
-    res.json({ data, limit, offset });
+    // Provenance IA de chaque morceau : « ai », « hybrid » ou null (pas de badge).
+    const provenance = await loadTrackProvenance(data.map((track) => track.id));
+    res.json({ data: data.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })), limit, offset });
   } catch (err) {
     next(err);
   }
@@ -33,7 +37,7 @@ tracksRouter.get("/", async (req, res, next) => {
 
 // GET /tracks/:id — métadonnées publiques d'un morceau publié.
 // Ne renvoie jamais de storage_key/URL brute ici : la lecture audio passe
-// par un flux d'autorisation dédié (voir DATA_FLOW.md, §3 Lecture/streaming).
+// par POST /plays (modules/plays), qui compte l'écoute.
 tracksRouter.get("/:id", async (req, res, next) => {
   try {
     const { data, error } = await supabaseAdmin
@@ -45,33 +49,8 @@ tracksRouter.get("/:id", async (req, res, next) => {
 
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "Track not found" });
-    res.json(data);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /tracks/:id/stream — URL signée vers le fichier audio.
-//
-// DÉPRÉCIÉE : elle délivre un morceau sans rien enregistrer, donc une écoute par
-// ce chemin n'est ni comptée ni rémunérée. La webapp passe désormais par
-// POST /plays (modules/plays). À SUPPRIMER une fois la webapp déployée sur la
-// nouvelle route : la laisser ouverte permettrait d'écouter sans être compté.
-tracksRouter.get("/:id/stream", requireAuth, async (req, res, next) => {
-  try {
-    const { data: track, error: trackError } = await supabaseAdmin
-      .from("tracks")
-      .select("id")
-      .eq("id", req.params.id)
-      .eq("status", "published")
-      .maybeSingle();
-    if (trackError) throw trackError;
-    if (!track) return res.status(404).json({ error: "Track not found" });
-
-    const stream = await signedStreamUrl(track.id);
-    if (!stream) return res.status(404).json({ error: "No audio file for this track" });
-
-    res.json(stream);
+    const provenance = await loadTrackProvenance([data.id]);
+    res.json({ ...data, provenance: provenance.get(data.id) ?? null });
   } catch (err) {
     next(err);
   }

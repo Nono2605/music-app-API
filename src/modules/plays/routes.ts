@@ -6,6 +6,7 @@ import { env } from "../../config/env";
 import { parseClientInfo } from "../../lib/clientInfo";
 import { clientHeadersFor } from "../../lib/webappAuth";
 import { loadEntitlement } from "../../lib/loadEntitlement";
+import { allowsExplicit } from "../../lib/explicit";
 import { signedStreamUrl } from "../../lib/streamUrl";
 import { applyHeartbeat, HEARTBEAT_EVERY_SECONDS, type HeartbeatState } from "./heartbeat";
 
@@ -67,12 +68,26 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
 
     const { data: track, error: trackError } = await supabaseAdmin
       .from("tracks")
-      .select("id, artist_id, album_id, duration_seconds")
+      .select("id, artist_id, album_id, duration_seconds, explicit")
       .eq("id", track_id)
       .eq("status", "published")
       .maybeSingle();
     if (trackError) throw trackError;
     if (!track) return res.status(404).json({ error: "Track not found" });
+
+    // Contenu explicite refusé dans les réglages de l'auditeur : on ne délivre rien, quelle que soit
+    // la liste d'où vient le morceau (playlist, favoris, lien). Le lecteur passe au suivant.
+    if (track.explicit === true) {
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from("profiles")
+        .select("explicit_content")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!allowsExplicit(profile)) {
+        return res.status(403).json({ error: "Explicit content is turned off in your settings", code: "explicit_blocked" });
+      }
+    }
 
     // Avant de créer quoi que ce soit : un morceau sans fichier ne s'écoute pas.
     const stream = await signedStreamUrl(track.id);
