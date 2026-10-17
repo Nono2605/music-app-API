@@ -20,7 +20,17 @@ import { checkArtistName } from "../../lib/artistNameCheck";
 import { DUPLICATE_FILE_MESSAGE, findForeignDuplicate } from "../../lib/duplicateFile";
 import { duplicateFileScan, nameSimilarityScans, recordScans } from "../../lib/scanLog";
 import { genreProblem, readTrackGenre, readTrackGenres, releaseGenreProblem } from "../../lib/genres";
-import { COVER_BUCKET, coverExtension, coverPath, ownCoverPath } from "../../lib/coverUrl";
+import {
+  ARTIST_IMAGE_BUCKET,
+  ARTIST_IMAGE_KINDS,
+  COVER_BUCKET,
+  artistImagePath,
+  coverPath,
+  extensionFromFilename,
+  imageExtension,
+  ownImagePath,
+  type ArtistImageKind,
+} from "../../lib/storageImage";
 import { creatorStatsRouter } from "./stats";
 
 export const creatorRouter = Router();
@@ -199,16 +209,74 @@ creatorRouter.get("/artist/name-check", async (req, res, next) => {
   }
 });
 
-// PATCH /creator/artist — met à jour le profil public de l'artiste.
+// Limites du profil public (le Studio affiche les mêmes).
+const ARTIST_BIO_MAX = 500;
+const ARTIST_COUNTRY_MAX = 56;
+
+// URL publique du dossier de l'artiste dans un bucket (« / » final).
+function publicFolder(bucket: string, artistId: string): string {
+  return supabaseAdmin.storage.from(bucket).getPublicUrl(`${artistId}/`).data.publicUrl;
+}
+
+// PATCH /creator/artist — met à jour le profil public de l'artiste : bio, pays, photo, bannière.
+//
+// Photo et bannière : une URL de NOTRE bucket artist-images, dans le dossier de cet artiste et du
+// bon type (avatar-… / banner-…), ou null pour la retirer. L'ancien fichier est supprimé du
+// stockage une fois la nouvelle valeur enregistrée.
 creatorRouter.patch("/artist", async (req, res, next) => {
   try {
     const artistId = await myArtistId(req.auth!.id);
     if (!artistId) return res.status(404).json({ error: "Artist profile not found" });
 
+    const body = req.body ?? {};
     const updates: Record<string, unknown> = {};
-    for (const field of ["bio", "avatar_url", "banner_url", "country"] as const) {
-      if (typeof req.body?.[field] === "string") updates[field] = req.body[field];
+
+    if (typeof body.bio === "string") {
+      const bio = body.bio.trim();
+      if (bio.length > ARTIST_BIO_MAX) {
+        return res.status(400).json({ error: `The bio can have up to ${ARTIST_BIO_MAX} characters.` });
+      }
+      updates.bio = bio;
     }
+    if (typeof body.country === "string") {
+      const country = body.country.trim();
+      if (country.length > ARTIST_COUNTRY_MAX) {
+        return res.status(400).json({ error: `The country can have up to ${ARTIST_COUNTRY_MAX} characters.` });
+      }
+      updates.country = country;
+    }
+
+    const imageFields: { field: "avatar_url" | "banner_url"; kind: ArtistImageKind }[] = [
+      { field: "avatar_url", kind: "avatar" },
+      { field: "banner_url", kind: "banner" },
+    ];
+    const sent = imageFields.filter(({ field }) => field in body);
+    const stale: string[] = [];
+    if (sent.length > 0) {
+      const prefix = publicFolder(ARTIST_IMAGE_BUCKET, artistId);
+      const { data: current, error: currentError } = await supabaseAdmin
+        .from("artists")
+        .select("avatar_url, banner_url")
+        .eq("id", artistId)
+        .single();
+      if (currentError) throw currentError;
+
+      for (const { field, kind } of sent) {
+        const value = body[field];
+        if (value === null || value === "") {
+          updates[field] = null;
+        } else if (ownImagePath(value, prefix, artistId, `${kind}-`)) {
+          updates[field] = value;
+        } else {
+          return res.status(400).json({ error: "Invalid image. Upload it again." });
+        }
+        if (updates[field] !== current[field]) {
+          const old = ownImagePath(current[field], prefix, artistId);
+          if (old) stale.push(old);
+        }
+      }
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
     }
@@ -221,19 +289,23 @@ creatorRouter.patch("/artist", async (req, res, next) => {
       .single();
 
     if (error) throw error;
+
+    // Best effort : un fichier qui reste n'est qu'un déchet de stockage, pas une erreur pour le créateur.
+    if (stale.length > 0) {
+      const { error: removeError } = await supabaseAdmin.storage.from(ARTIST_IMAGE_BUCKET).remove(stale);
+      if (removeError) console.error("Could not remove previous artist image:", removeError.message);
+    }
     res.json(data);
   } catch (err) {
     next(err);
   }
 });
 
-const ARTIST_IMAGE_BUCKET = "artist-images";
-const ARTIST_IMAGE_KINDS = new Set(["avatar", "banner"]);
-
-// POST /creator/artist/upload-url — URL signée pour uploader un avatar ou
-// une bannière. Bucket public en lecture (contrairement à track-audio) :
-// on renvoie directement l'URL publique déterministe, à sauvegarder ensuite
-// via PATCH /creator/artist une fois l'upload terminé côté client.
+// POST /creator/artist/upload-url — URL signée pour envoyer la photo ou la bannière directement
+// dans le stockage. Le corps donne le `kind` et le type du fichier (`content_type`) ; la réponse
+// contient l'URL publique à enregistrer ensuite avec PATCH /creator/artist une fois l'envoi
+// terminé. Le stockage lui-même refuse tout autre type que JPEG / PNG / WebP et les fichiers de
+// plus de 5 Mo. (Un ancien Studio n'envoie que `filename` : on en déduit le type.)
 creatorRouter.post("/artist/upload-url", async (req, res, next) => {
   try {
     const artistId = await myArtistId(req.auth!.id);
@@ -244,13 +316,11 @@ creatorRouter.post("/artist/upload-url", async (req, res, next) => {
       return res.status(400).json({ error: "kind must be one of: avatar, banner" });
     }
 
-    const filename = String(req.body?.filename ?? "image");
-    const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
-    const path = `${artistId}/${kind}-${Date.now()}.${ext}`;
+    const ext = imageExtension(req.body?.content_type) ?? extensionFromFilename(req.body?.filename);
+    if (!ext) return res.status(400).json({ error: "The image must be a JPEG, PNG or WebP file." });
 
-    const { data, error } = await supabaseAdmin.storage
-      .from(ARTIST_IMAGE_BUCKET)
-      .createSignedUploadUrl(path);
+    const path = artistImagePath(artistId, kind as ArtistImageKind, ext, Date.now());
+    const { data, error } = await supabaseAdmin.storage.from(ARTIST_IMAGE_BUCKET).createSignedUploadUrl(path);
     if (error) throw error;
 
     const {
@@ -459,11 +529,6 @@ creatorRouter.get("/albums/:id", async (req, res, next) => {
   }
 });
 
-// URL publique du dossier de l'artiste dans le bucket des pochettes (« / » final).
-function coverPublicPrefix(artistId: string): string {
-  return supabaseAdmin.storage.from(COVER_BUCKET).getPublicUrl(`${artistId}/`).data.publicUrl;
-}
-
 // POST /creator/albums/:id/cover-upload-url — URL signée pour envoyer la pochette d'une
 // release directement dans le stockage. Le corps donne le type du fichier (`content_type`) ;
 // la réponse contient l'URL publique à enregistrer ensuite avec PATCH /creator/albums/:id
@@ -474,7 +539,7 @@ creatorRouter.post("/albums/:id/cover-upload-url", async (req, res, next) => {
     const album = await ownedAlbum(req.auth!.id, req.params.id);
     if (!album) return res.status(404).json({ error: "Album not found" });
 
-    const ext = coverExtension(req.body?.content_type);
+    const ext = imageExtension(req.body?.content_type);
     if (!ext) return res.status(400).json({ error: "The cover must be a JPEG, PNG or WebP image." });
 
     const path = coverPath(album.artist_id, album.id, ext, Date.now());
@@ -516,16 +581,16 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
     // Ancien fichier supprimé du stockage une fois la nouvelle valeur enregistrée.
     let staleCoverPath: string | null = null;
     if ("cover_url" in (req.body ?? {})) {
-      const prefix = coverPublicPrefix(album.artist_id);
+      const prefix = publicFolder(COVER_BUCKET, album.artist_id);
       if (req.body.cover_url === null) {
         updates.cover_url = null;
-      } else if (ownCoverPath(req.body.cover_url, prefix, album.artist_id)) {
+      } else if (ownImagePath(req.body.cover_url, prefix, album.artist_id)) {
         updates.cover_url = req.body.cover_url;
       } else {
         return res.status(400).json({ error: "Invalid cover. Upload it again." });
       }
       if (updates.cover_url !== album.cover_url) {
-        staleCoverPath = ownCoverPath(album.cover_url, prefix, album.artist_id);
+        staleCoverPath = ownImagePath(album.cover_url, prefix, album.artist_id);
       }
     }
     if (typeof req.body?.status === "string") {
