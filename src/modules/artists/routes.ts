@@ -35,7 +35,8 @@ artistsRouter.get("/", async (req, res, next) => {
   }
 });
 
-// GET /artists/:slug — profil + discographie (morceaux publiés). ?explicit=false écarte les morceaux explicites.
+// GET /artists/:slug — profil + discographie (morceaux publiés) + nombre de followers (le nombre seulement,
+// jamais qui). ?explicit=false écarte les morceaux explicites.
 artistsRouter.get("/:slug", async (req, res, next) => {
   try {
     const run = (hideAnonymized: boolean) => {
@@ -59,11 +60,21 @@ artistsRouter.get("/:slug", async (req, res, next) => {
       .eq("artist_id", artist.id)
       .eq("status", "published");
     if (hidesExplicit(req.query)) tracksQuery = tracksQuery.eq("explicit", false);
-    const { data: tracks, error: tracksError } = await tracksQuery.order("published_at", { ascending: false });
+    // Le nombre de followers est public, la liste de qui suit ne l'est pas : on ne renvoie que le nombre.
+    const [{ data: tracks, error: tracksError }, followers] = await Promise.all([
+      tracksQuery.order("published_at", { ascending: false }),
+      supabaseAdmin.from("follows").select("id", { count: "exact", head: true }).eq("artist_id", artist.id),
+    ]);
 
     if (tracksError) throw tracksError;
+    // Une statistique secondaire : si elle échoue, la page s'affiche sans (null) au lieu de tomber.
+    if (followers.error) console.error("artist followers count failed", followers.error);
     const provenance = await loadTrackProvenance(tracks.map((track) => track.id));
-    res.json({ ...artist, tracks: tracks.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })) });
+    res.json({
+      ...artist,
+      followers_count: followers.error ? null : (followers.count ?? 0),
+      tracks: tracks.map((track) => ({ ...track, provenance: provenance.get(track.id) ?? null })),
+    });
   } catch (err) {
     next(err);
   }
