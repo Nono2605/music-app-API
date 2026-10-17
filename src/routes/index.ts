@@ -14,6 +14,7 @@ import { billingRouter } from "../modules/billing/routes";
 import { rateLimit } from "../lib/rateLimit";
 import { accountRouter } from "../modules/privacy/account";
 import { creatorGenreRouter } from "../modules/creator/genre";
+import { creatorDetailsRouter } from "../modules/creator/details";
 import { genresRouter } from "../modules/genres/routes";
 
 export const apiRouter = Router();
@@ -32,6 +33,8 @@ apiRouter.post("/plays", perMinute(60));
 apiRouter.post("/plays/:id/heartbeat", perMinute(30));
 apiRouter.use("/creator", perMinute(120));
 apiRouter.get("/creator/artist/name-check", perMinute(30));
+apiRouter.get("/creator/artists/search", perMinute(60));
+apiRouter.post("/creator/albums/:id/tracks", perMinute(60)); // l'assistant « nouvelle release » : un appel par morceau
 apiRouter.post(
   [
     "/creator/artist/upload-url",
@@ -60,6 +63,7 @@ apiRouter.use("/playlists", playlistsRouter);
 apiRouter.use("/subscriptions", subscriptionsRouter);
 // Le genre d'un morceau : routes à part, montées avant le routeur principal.
 apiRouter.use("/creator", creatorGenreRouter);
+apiRouter.use("/creator", creatorDetailsRouter);
 apiRouter.use("/creator", creatorRouter);
 apiRouter.use("/plays", playsRouter);
 apiRouter.use("/stripe", stripeRouter);
