@@ -3,6 +3,7 @@ import { supabaseAdmin } from "../../lib/supabaseAdmin";
 import { containsPattern, isUuid, parseListParams, toAlbumSummary, type AlbumRow } from "./list";
 import { loadTrackProvenance } from "../../lib/loadProvenance";
 import { loadTrackMeta } from "../../lib/loadTrackMeta";
+import { loadTrackLikeCounts } from "../../lib/loadLikeCounts";
 import { albumProvenance } from "../../lib/publicProvenance";
 import { isMissingColumn } from "../../lib/schemaCompat";
 import { cleanSearch, genreFilter, parseGenreParam } from "../../lib/searchTerms";
@@ -106,10 +107,15 @@ albumsRouter.get("/:id", async (req, res, next) => {
 
     // Provenance IA et détails de chaque morceau, et provenance de l'album (100 % IA seulement si tous le sont).
     const ids = tracks.map((track) => track.id);
-    const [byTrack, meta] = await Promise.all([loadTrackProvenance(ids), loadTrackMeta(ids)]);
+    const [byTrack, meta, likes] = await Promise.all([
+      loadTrackProvenance(ids),
+      loadTrackMeta(ids),
+      loadTrackLikeCounts(ids),
+    ]);
     const withDetails = tracks.map((track) => ({
       ...track,
       provenance: byTrack.get(track.id) ?? null,
+      likes_count: likes.get(track.id) ?? 0,
       ...metaFields(meta.get(track.id)),
     }));
     res.json({

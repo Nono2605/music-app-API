@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/auth";
 import { loadAlbumProvenance, loadTrackProvenance } from "../../lib/loadProvenance";
 import { loadExplicitAlbums } from "../../lib/loadExplicit";
 import { loadTrackMeta } from "../../lib/loadTrackMeta";
+import { loadTrackLikeCounts } from "../../lib/loadLikeCounts";
 import { metaFields } from "../../lib/trackMeta";
 import { chunk } from "../../lib/publicProvenance";
 import { ITEM_TYPES, MAX_IDS, parseItem, parseLibraryParams, playlistVisibleTo, type ItemType } from "./page";
@@ -84,14 +85,16 @@ libraryRouter.get("/", requireAuth, async (req, res, next) => {
     );
 
     // Badges de provenance IA et « E » (explicite) des morceaux et des albums de cette page.
-    const [trackProvenance, albumProvenance, explicitAlbums, trackMeta] = await Promise.all([
+    const [trackProvenance, albumProvenance, explicitAlbums, trackMeta, trackLikes] = await Promise.all([
       loadTrackProvenance(idsByType.track),
       loadAlbumProvenance(idsByType.album),
       loadExplicitAlbums(idsByType.album),
       loadTrackMeta(idsByType.track),
+      loadTrackLikeCounts(idsByType.track),
     ]);
     for (const [id, item] of detailsByType.track ?? []) {
       item.provenance = trackProvenance.get(id) ?? null;
+      item.likes_count = trackLikes.get(id) ?? 0;
       Object.assign(item, metaFields(trackMeta.get(id))); // genres, styles et crédits
     }
     for (const [id, item] of detailsByType.album ?? []) {

@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/auth";
 import { isMissingColumn } from "../../lib/schemaCompat";
 import { loadTrackProvenance } from "../../lib/loadProvenance";
 import { loadTrackMeta } from "../../lib/loadTrackMeta";
+import { loadTrackLikeCounts } from "../../lib/loadLikeCounts";
 import { genreFilter, parseGenreParam } from "../../lib/searchTerms";
 import { EMPTY_META, metaFields, topGenres } from "../../lib/trackMeta";
 import { hidesExplicit } from "../../lib/explicit";
@@ -89,7 +90,11 @@ artistsRouter.get("/:slug", async (req, res, next) => {
     // Une statistique secondaire : si elle échoue, la page s'affiche sans (null) au lieu de tomber.
     if (followers.error) console.error("artist followers count failed", followers.error);
     const ids = tracks.map((track) => track.id);
-    const [provenance, meta] = await Promise.all([loadTrackProvenance(ids), loadTrackMeta(ids)]);
+    const [provenance, meta, likes] = await Promise.all([
+      loadTrackProvenance(ids),
+      loadTrackMeta(ids),
+      loadTrackLikeCounts(ids),
+    ]);
     res.json({
       ...artist,
       followers_count: followers.error ? null : (followers.count ?? 0),
@@ -98,6 +103,7 @@ artistsRouter.get("/:slug", async (req, res, next) => {
       tracks: tracks.map((track) => ({
         ...track,
         provenance: provenance.get(track.id) ?? null,
+        likes_count: likes.get(track.id) ?? 0,
         ...metaFields(meta.get(track.id)),
       })),
     });

@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/auth";
 import { addTrackOutcome } from "./addTrack";
 import { loadTrackProvenance } from "../../lib/loadProvenance";
 import { loadTrackMeta } from "../../lib/loadTrackMeta";
+import { loadTrackLikeCounts } from "../../lib/loadLikeCounts";
 import { metaFields } from "../../lib/trackMeta";
 import { isUuid } from "../albums/list";
 
@@ -82,7 +83,11 @@ playlistsRouter.get("/:id", requireAuth, async (req, res, next) => {
 
     const tracks = playlistTracks.map((pt) => ({ ...(pt.tracks as unknown as { id: string }), position: pt.position }));
     const ids = tracks.map((track) => track.id);
-    const [provenance, meta] = await Promise.all([loadTrackProvenance(ids), loadTrackMeta(ids)]);
+    const [provenance, meta, likes] = await Promise.all([
+      loadTrackProvenance(ids),
+      loadTrackMeta(ids),
+      loadTrackLikeCounts(ids),
+    ]);
 
     res.json({
       ...playlist,
@@ -90,6 +95,7 @@ playlistsRouter.get("/:id", requireAuth, async (req, res, next) => {
       tracks: tracks.map((track) => ({
         ...track,
         provenance: provenance.get(track.id) ?? null,
+        likes_count: likes.get(track.id) ?? 0,
         ...metaFields(meta.get(track.id)),
       })),
     });
