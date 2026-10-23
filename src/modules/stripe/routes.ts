@@ -2,14 +2,14 @@ import { Router } from "express";
 import { syncPlansToStripe } from "../../lib/billing";
 import { getStripe, stripeMode, stripeProblem } from "../../lib/stripe";
 import { requireAdmin } from "../../middleware/requireAdmin";
-import { requireAuth } from "../../middleware/auth";
+import { requireAuthStrict } from "../../middleware/auth";
 
 export const stripeRouter = Router();
 
 // GET /stripe/status — l'API est-elle bien branchée sur le compte Stripe ? RÉSERVÉ AUX ADMINS.
 // Ne renvoie jamais la clé : seulement si elle est utilisable, son mode (test / live) et l'identité
 // publique du compte (identifiant, pays, devise). Sert à la page « Revenue » de l'admin.
-stripeRouter.get("/status", requireAuth, requireAdmin, async (_req, res) => {
+stripeRouter.get("/status", requireAuthStrict, requireAdmin, async (_req, res) => {
   const problem = stripeProblem();
   if (problem) return res.json({ configured: false, problem });
 
@@ -41,7 +41,7 @@ stripeRouter.get("/status", requireAuth, requireAdmin, async (_req, res) => {
 
 // POST /stripe/plans/sync — crée dans Stripe le produit et le prix de chaque plan payant qui n'en
 // a pas encore (ex. « Premium », 10 CHF par mois, TTC). Rejouable sans doublon. RÉSERVÉ AUX ADMINS.
-stripeRouter.post("/plans/sync", requireAuth, requireAdmin, async (_req, res) => {
+stripeRouter.post("/plans/sync", requireAuthStrict, requireAdmin, async (_req, res) => {
   const problem = stripeProblem();
   if (problem) return res.status(503).json({ error: problem, code: "billing_unavailable" });
 

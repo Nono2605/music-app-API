@@ -3,11 +3,11 @@ import { cancelLiveSubscriptions } from "../../lib/billing";
 import { recordPrivacyRequest } from "../../lib/privacyRequests";
 import { StripeNotConfiguredError } from "../../lib/stripe";
 import { supabaseAdmin } from "../../lib/supabaseAdmin";
-import { requireAuth } from "../../middleware/auth";
+import { requireAuthStrict } from "../../middleware/auth";
 import { createAccountRouter } from "./accountRouter";
 
 export const accountRouter = createAccountRouter({
-  authenticate: requireAuth,
+  authenticate: requireAuthStrict,
   loadUser: async (userId) => {
     const { data, error } = await supabaseAdmin.from("users").select("email, role").eq("id", userId).maybeSingle();
     if (error) throw error;

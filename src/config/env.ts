@@ -44,6 +44,9 @@ export const env = {
   stripeAutomaticTax: process.env.STRIPE_AUTOMATIC_TAX === "on",
   // Adresse de l'app auditeur (retour de Stripe Checkout et du portail client).
   checkoutReturnBaseUrl: process.env.CHECKOUT_RETURN_BASE_URL?.trim() || undefined,
+  // « on » : le jeton d'accès se vérifie localement (signature, clé publique du projet) au lieu d'un appel à
+  // Supabase Auth par requête (middleware/auth.ts, lib/accessToken.ts). Toute autre valeur : comportement d'avant.
+  authLocalVerify: process.env.AUTH_LOCAL_VERIFY === "on",
   // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
   // à demander (aucune par défaut : on ne demande rien d'inutile).
   privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),
