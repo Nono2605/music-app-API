@@ -14,6 +14,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "backfill:audio": "tsx src/scripts/backfillAudio.ts",
     "loadtest": "tsx src/scripts/loadTest.ts",
+    "test:worker": "node --test cdn-worker/test/*.test.js",
     "purge:anonymized": "tsx src/scripts/purgeAnonymized.ts"
   },
   "dependencies": {

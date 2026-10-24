@@ -1,0 +1,6 @@
+{
+  "name": "vynl-cdn-worker",
+  "private": true,
+  "type": "module",
+  "description": "Worker Cloudflare du CDN audio (cdn.vynl.li). Se déploie en collant src/worker.js dans l'éditeur de Workers de Cloudflare ; ce fichier ne sert qu'aux tests (node --test cdn-worker/test)."
+}
