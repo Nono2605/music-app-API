@@ -1,6 +1,6 @@
 # CDN audio (cdn.vynl.li)
 
-Un Worker Cloudflare qui sert les fichiers AAC du bucket R2 `vynl-audio`, **seulement à qui présente une adresse signée par l'API**. Le bucket reste privé : rien n'y est lisible sans ce Worker.
+Un Worker Cloudflare qui sert les fichiers AAC du bucket R2 `vynlmusic`, **seulement à qui présente une adresse signée par l'API**. Le bucket reste privé : rien n'y est lisible sans ce Worker.
 
 ```
 https://cdn.vynl.li/<clé>?e=<expiration, secondes Unix>&s=<signature>
@@ -18,9 +18,9 @@ L'API signe (`src/lib/cdnToken.ts`), le Worker vérifie (`src/worker.js`). Les d
 
 ## Mise en place (une fois, dans le tableau de bord Cloudflare)
 
-1. **R2** : crée le bucket `vynl-audio` (Europe de l'Ouest), et **laisse-le privé** : ni domaine public, ni adresse `r2.dev`.
+1. **R2** : crée le bucket `vynlmusic` (Europe de l'Ouest), et **laisse-le privé** : ni domaine public, ni adresse `r2.dev`.
 2. **Workers & Pages** : Create, Create Worker, nom `vynl-cdn`, Deploy. Puis Edit code : remplace tout par le contenu de `src/worker.js`, puis Deploy.
-3. **Settings, Bindings** : Add, R2 bucket. Nom de la variable : `AUDIO` ; bucket : `vynl-audio`.
+3. **Settings, Bindings** : Add, R2 bucket. Nom de la variable : `AUDIO` ; bucket : `vynlmusic`.
 4. **Settings, Variables and Secrets** : Add, type **Secret**, nom `CDN_TOKEN_SECRET`, la valeur choisie (la même que `CDN_TOKEN_SECRET` sur l'API).
 5. **Settings, Domains & Routes** : Add, Custom domain : `cdn.vynl.li`.
 6. Test : `curl -i https://cdn.vynl.li/t/x/y.m4a` doit répondre **403** (pas de jeton). Un **503** veut dire que le secret n'est pas réglé.

@@ -1,6 +1,6 @@
 // Worker Cloudflare du CDN audio (cdn.vynl.li).
 //
-// Sert les fichiers AAC du bucket R2 « vynl-audio » (liaison AUDIO), SEULEMENT à qui présente une adresse signée par
+// Sert les fichiers AAC du bucket R2 « vynlmusic » (liaison AUDIO), SEULEMENT à qui présente une adresse signée par
 // l'API (lib/cdnToken.ts) : ?e=<expiration>&s=<signature>. Le bucket reste privé, jamais lisible sans ce Worker.
 //
 //  * le jeton est vérifié avant tout (HMAC-SHA256, secret CDN_TOKEN_SECRET) : adresse fausse, modifiée ou expirée = 403 ;
