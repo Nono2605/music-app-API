@@ -11,6 +11,7 @@ import { playsRouter } from "../modules/plays/routes";
 import { privacyRouter } from "../modules/privacy/routes";
 import { stripeRouter } from "../modules/stripe/routes";
 import { billingRouter } from "../modules/billing/routes";
+import { adminRouter } from "../modules/admin/routes";
 import { rateLimit } from "../lib/rateLimit";
 import { accountRouter } from "../modules/privacy/account";
 import { creatorGenreRouter } from "../modules/creator/genre";
@@ -50,6 +51,7 @@ apiRouter.get("/me/export", perHour(5));
 apiRouter.post("/me/delete", perHour(5));
 apiRouter.use("/billing", perMinute(10)); // chaque appel crée des objets chez Stripe
 apiRouter.use("/stripe", perMinute(30));
+apiRouter.use("/admin", perMinute(30));
 
 apiRouter.use("/", usersRouter);
 apiRouter.use("/", privacyRouter);
@@ -67,4 +69,5 @@ apiRouter.use("/creator", creatorDetailsRouter);
 apiRouter.use("/creator", creatorRouter);
 apiRouter.use("/plays", playsRouter);
 apiRouter.use("/stripe", stripeRouter);
+apiRouter.use("/admin", adminRouter);
 apiRouter.use("/billing", billingRouter);

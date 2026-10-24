@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "backfill:audio": "tsx src/scripts/backfillAudio.ts",
+    "loadtest": "tsx src/scripts/loadTest.ts",
     "purge:anonymized": "tsx src/scripts/purgeAnonymized.ts"
   },
   "dependencies": {
