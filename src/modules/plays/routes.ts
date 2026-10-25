@@ -8,6 +8,7 @@ import { clientHeadersFor } from "../../lib/webappAuth";
 import { loadEntitlement } from "../../lib/loadEntitlement";
 import { allowsExplicit } from "../../lib/explicit";
 import { signedStreamUrl } from "../../lib/streamUrl";
+import { DEFAULT_QUALITY, isStreamQuality } from "../../lib/renditions";
 import { applyHeartbeat, HEARTBEAT_EVERY_SECONDS, type HeartbeatState } from "./heartbeat";
 
 export const playsRouter = Router();
@@ -44,11 +45,12 @@ async function closeOpenPlays(userId: string) {
 
 // POST /plays — démarre une lecture. Remplace GET /tracks/:id/stream pour
 // écouter : sans passer par ici, une écoute ne serait pas comptée.
-//   body : { track_id, client_session_id?, source_context?, source_id?, app_version? }
+//   body : { track_id, client_session_id?, source_context?, source_id?, app_version?, quality? }
+//   quality : « standard » (128 kbit/s, par défaut) ou « high » (256 kbit/s), pour les morceaux servis par le CDN.
 playsRouter.post("/", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth!.id;
-    const { track_id, client_session_id, source_context, source_id, app_version } = req.body ?? {};
+    const { track_id, client_session_id, source_context, source_id, app_version, quality } = req.body ?? {};
 
     if (typeof track_id !== "string" || !UUID.test(track_id)) {
       return res.status(400).json({ error: "track_id must be a UUID" });
@@ -64,6 +66,9 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
     }
     if (app_version !== undefined && (typeof app_version !== "string" || app_version.length > 32)) {
       return res.status(400).json({ error: "app_version must be at most 32 characters" });
+    }
+    if (quality !== undefined && !isStreamQuality(quality)) {
+      return res.status(400).json({ error: "quality must be standard or high" });
     }
 
     const { data: track, error: trackError } = await supabaseAdmin
@@ -90,7 +95,7 @@ playsRouter.post("/", requireAuth, async (req, res, next) => {
     }
 
     // Avant de créer quoi que ce soit : un morceau sans fichier ne s'écoute pas.
-    const stream = await signedStreamUrl(track.id);
+    const stream = await signedStreamUrl(track.id, quality ?? DEFAULT_QUALITY);
     if (!stream) return res.status(404).json({ error: "No audio file for this track" });
 
     const respond = (status: number, playId: string) =>

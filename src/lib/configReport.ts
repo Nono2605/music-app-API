@@ -13,6 +13,10 @@ export interface ConfigInput {
   stripeAllowLive: boolean;
   stripeAutomaticTax: boolean;
   checkoutReturnBaseUrl?: string;
+  // CDN audio : les deux valeurs brutes, et ce qu'en a retenu l'API (undefined si l'une manque ou si l'adresse est invalide).
+  cdnBaseUrl?: string;
+  cdnTokenSecret?: string;
+  cdn?: { baseUrl: string };
   corsAllowedOrigins: string[];
 }
 
@@ -32,9 +36,12 @@ export interface ConfigReport {
     webapp_shared_secret: boolean;
     stripe_secret_key: boolean;
     stripe_webhook_secret: boolean;
+    cdn_token_secret: boolean;
   };
   stripe: { mode: "test" | "live" | null; allow_live: boolean; automatic_tax: boolean };
   checkout_return_host: string | null;
+  // `active` : l'API sert l'écoute par le CDN (adresse valide ET secret réglé). `configured_host` : l'adresse demandée, même invalide.
+  cdn: { active: boolean; host: string | null; configured_host: string | null };
   cors_allowed_origins: string[];
 }
 
@@ -68,6 +75,7 @@ export function buildConfigReport(config: ConfigInput, runtime: RuntimeInput): C
       webapp_shared_secret: Boolean(config.webappSharedSecret),
       stripe_secret_key: Boolean(config.stripeSecretKey),
       stripe_webhook_secret: Boolean(config.stripeWebhookSecret),
+      cdn_token_secret: Boolean(config.cdnTokenSecret),
     },
     stripe: {
       mode: stripeMode(config.stripeSecretKey),
@@ -75,6 +83,7 @@ export function buildConfigReport(config: ConfigInput, runtime: RuntimeInput): C
       automatic_tax: config.stripeAutomaticTax,
     },
     checkout_return_host: hostOf(config.checkoutReturnBaseUrl),
+    cdn: { active: Boolean(config.cdn), host: hostOf(config.cdn?.baseUrl), configured_host: hostOf(config.cdnBaseUrl) },
     cors_allowed_origins: [...config.corsAllowedOrigins],
   };
 }

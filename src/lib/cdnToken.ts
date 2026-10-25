@@ -24,3 +24,26 @@ export function signCdnUrl(base: string, key: string, secret: string, expires: n
   if (!isSafeCdnKey(key)) throw new Error("Unsafe CDN key");
   return `${base.replace(/\/+$/, "")}/${key}?e=${expires}&s=${cdnSignature(secret, key, expires)}`;
 }
+
+export interface CdnConfig {
+  baseUrl: string;
+  secret: string;
+}
+
+// Les deux variables d'environnement du CDN (CDN_BASE_URL et CDN_TOKEN_SECRET). Il faut LES DEUX, et une adresse
+// en https (http seulement vers la machine locale) : sinon le CDN reste éteint et l'écoute passe par Supabase,
+// comme avant. Seule l'origine est gardée (« https://cdn.vynl.li »), jamais un chemin.
+export function parseCdnConfig(baseUrl: string | undefined, secret: string | undefined): CdnConfig | undefined {
+  const cleanSecret = secret?.trim();
+  const cleanBase = baseUrl?.trim();
+  if (!cleanSecret || !cleanBase) return undefined;
+  let url: URL;
+  try {
+    url = new URL(cleanBase);
+  } catch {
+    return undefined;
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return undefined;
+  return { baseUrl: url.origin, secret: cleanSecret };
+}

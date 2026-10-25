@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cdnSignature, isSafeCdnKey, signCdnUrl } from "./cdnToken";
+import { cdnSignature, isSafeCdnKey, parseCdnConfig, signCdnUrl } from "./cdnToken";
 
 // Vecteur partagé avec le Worker (cdn-worker/test/token.test.js) : si l'un change, l'autre doit changer.
 const SECRET = "secret-de-test-pour-les-vecteurs";
@@ -50,5 +50,25 @@ describe("isSafeCdnKey", () => {
     for (const bad of ["a/../b", "..", ".", "a/./b", "a b", "a%2Fb", "a\\b", "é.m4a", "a/b/", `a/${"x".repeat(300)}`]) {
       assert.equal(isSafeCdnKey(bad), false, bad);
     }
+  });
+});
+
+describe("parseCdnConfig", () => {
+  it("garde l'origine de l'adresse et le secret", () => {
+    assert.deepEqual(parseCdnConfig("https://cdn.vynl.li/", " secret "), { baseUrl: "https://cdn.vynl.li", secret: "secret" });
+    assert.deepEqual(parseCdnConfig("https://cdn.vynl.li/un/chemin?x=1", "s"), { baseUrl: "https://cdn.vynl.li", secret: "s" });
+  });
+
+  it("éteint le CDN s'il manque l'adresse ou le secret", () => {
+    assert.equal(parseCdnConfig(undefined, "s"), undefined);
+    assert.equal(parseCdnConfig("https://cdn.vynl.li", undefined), undefined);
+    assert.equal(parseCdnConfig("", "s"), undefined);
+    assert.equal(parseCdnConfig("https://cdn.vynl.li", "  "), undefined);
+  });
+
+  it("refuse une adresse illisible ou en http (sauf vers la machine locale)", () => {
+    assert.equal(parseCdnConfig("pas une adresse", "s"), undefined);
+    assert.equal(parseCdnConfig("http://cdn.vynl.li", "s"), undefined);
+    assert.deepEqual(parseCdnConfig("http://localhost:8787", "s"), { baseUrl: "http://localhost:8787", secret: "s" });
   });
 });

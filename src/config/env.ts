@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { parsePrivacyConfig } from "../lib/consents";
+import { parseCdnConfig } from "../lib/cdnToken";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -47,6 +48,11 @@ export const env = {
   // « on » : le jeton d'accès se vérifie localement (signature, clé publique du projet) au lieu d'un appel à
   // Supabase Auth par requête (middleware/auth.ts, lib/accessToken.ts). Toute autre valeur : comportement d'avant.
   authLocalVerify: process.env.AUTH_LOCAL_VERIFY === "on",
+  // CDN audio (cdn.vynl.li, lib/resolveStream.ts) : CDN_BASE_URL et CDN_TOKEN_SECRET (le même secret que le Worker
+  // Cloudflare). Les deux ou rien : sans eux, ou si l'adresse est invalide, l'écoute passe par Supabase comme avant.
+  cdnBaseUrl: process.env.CDN_BASE_URL?.trim() || undefined,
+  cdnTokenSecret: process.env.CDN_TOKEN_SECRET?.trim() || undefined,
+  cdn: parseCdnConfig(process.env.CDN_BASE_URL, process.env.CDN_TOKEN_SECRET),
   // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
   // à demander (aucune par défaut : on ne demande rien d'inutile).
   privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),
