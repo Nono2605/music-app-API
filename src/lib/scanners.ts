@@ -21,7 +21,10 @@ export interface ScanFile {
 
 export interface ScanContext {
   track: ScanTrack;
+  /** Les fichiers du morceau, le plus ancien d'abord (celui qui est écouté). */
   files: ScanFile[];
+  /** Une adresse signée, de courte durée, vers le premier fichier ; seulement pour les contrôles qui lisent l'audio. */
+  audioUrl?: () => Promise<string | null>;
 }
 
 // Ce que rend un contrôle ; l'exécuteur y ajoute le morceau, l'artiste, le nom du contrôle et du prestataire.

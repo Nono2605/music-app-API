@@ -1,8 +1,11 @@
 import { hostname } from "node:os";
+import { acrCloudConfigFrom, identifySample } from "./acrcloud";
+import { cutSample } from "./audioSamples";
 import type { BlockedDb } from "./blockedFiles";
 import type { DuplicateDb } from "./duplicateFile";
+import { fingerprintScanner } from "./fingerprintScanner";
 import { createScanRunner, type ScanJob, type ScanRunnerDeps } from "./scanRunner";
-import { blockedAudioScanner, duplicateAudioScanner, similarTitleScanner, type ScanContext } from "./scanners";
+import { blockedAudioScanner, duplicateAudioScanner, similarTitleScanner, type ScanContext, type ScanOutcome, type Scanner } from "./scanners";
 import type { ScanRecord } from "./scanLog";
 import { isMissingFunction, isMissingTable } from "./schemaCompat";
 import type { TitleDb } from "./similarTitle";
@@ -57,12 +60,82 @@ export async function enqueueTrackScans(
 
 const workerId = `${hostname()}-${process.pid}`;
 
-const realDeps: ScanRunnerDeps = {
-  scanners: [
+const AUDIO_BUCKET = "track-audio";
+const AUDIO_URL_SECONDS = 900;
+const REUSE_DAYS = 90;
+
+function numberFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+// Les requêtes déjà envoyées à ACRCloud ce mois-ci (UTC), d'après le journal : sert au plafond mensuel.
+async function acrCloudRequestsThisMonth(): Promise<number> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("track_scans")
+    .select("detail")
+    .eq("provider", "acrcloud")
+    .gte("created_at", monthStart)
+    .limit(5000);
+  if (error) throw error;
+  return (data ?? []).reduce((total, row) => total + (Number((row.detail as { requests?: unknown } | null)?.requests) || 0), 0);
+}
+
+// Un résultat ACRCloud récent pour le MÊME fichier (même empreinte SHA-256) de ce morceau : on le reprend.
+async function previousFingerprint(trackId: string, checksum: string): Promise<ScanOutcome | null> {
+  const since = new Date(Date.now() - REUSE_DAYS * 86_400_000).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("track_scans")
+    .select("result, score, track_file_id, detail")
+    .eq("track_id", trackId)
+    .eq("provider", "acrcloud")
+    .eq("check_kind", "fingerprint")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  if (error) throw error;
+  const row = (data ?? []).find((item) => {
+    const detail = item.detail as { file_checksum?: unknown; unavailable?: unknown } | null;
+    return detail?.file_checksum === checksum && detail?.unavailable !== true;
+  });
+  return row ? { result: row.result, score: row.score, track_file_id: row.track_file_id, detail: row.detail ?? {} } : null;
+}
+
+// Les contrôles de ce processus. Celui d'empreinte n'existe que si les trois réglages ACRCloud sont posés
+// (ACRCLOUD_HOST, ACRCLOUD_ACCESS_KEY, ACRCLOUD_ACCESS_SECRET) : sans eux, rien n'est envoyé à l'extérieur.
+function buildScanners(): Scanner[] {
+  const scanners: Scanner[] = [
     duplicateAudioScanner(supabaseAdmin as unknown as DuplicateDb),
     blockedAudioScanner(supabaseAdmin as unknown as BlockedDb),
     similarTitleScanner(supabaseAdmin as unknown as TitleDb),
-  ],
+  ];
+
+  const acr = acrCloudConfigFrom(process.env);
+  const ffmpegStatic: string | null = require("ffmpeg-static");
+  const ffmpeg = process.env.FFMPEG_PATH || ffmpegStatic;
+  if (acr && ffmpeg) {
+    const failScore = process.env.ACRCLOUD_FAIL_SCORE?.trim() ? numberFromEnv("ACRCLOUD_FAIL_SCORE", NaN) : undefined;
+    scanners.push(
+      fingerprintScanner({
+        identify: (sample) => identifySample(acr, sample),
+        cut: (url, startSeconds) => cutSample(ffmpeg, url, startSeconds),
+        requestsThisMonth: acrCloudRequestsThisMonth,
+        previous: previousFingerprint,
+        warnScore: numberFromEnv("ACRCLOUD_WARN_SCORE", 60),
+        failScore: failScore !== undefined && Number.isFinite(failScore) ? failScore : undefined,
+        monthlyCap: numberFromEnv("ACRCLOUD_MONTHLY_REQUESTS", 300),
+      })
+    );
+  } else if (acr) {
+    console.warn("ACRCloud is configured but ffmpeg is not available: the fingerprint check is off.");
+  }
+  return scanners;
+}
+
+const realDeps: ScanRunnerDeps = {
+  scanners: buildScanners(),
 
   async claim(): Promise<ScanJob | null> {
     const { data, error } = await supabaseAdmin.rpc("claim_scan_job", {
@@ -95,10 +168,22 @@ const realDeps: ScanRunnerDeps = {
       .from("track_files")
       .select("id, checksum, storage_key")
       .eq("track_id", trackId)
-      .is("purged_at", null);
+      .is("purged_at", null)
+      .order("created_at", { ascending: true });
     if (files.error) throw files.error;
 
-    return { track: track.data, files: files.data ?? [] };
+    const rows = files.data ?? [];
+    return {
+      track: track.data,
+      files: rows,
+      // Une adresse signée de courte durée, demandée seulement par les contrôles qui lisent l'audio.
+      audioUrl: async () => {
+        if (!rows[0]) return null;
+        const signed = await supabaseAdmin.storage.from(AUDIO_BUCKET).createSignedUrl(rows[0].storage_key, AUDIO_URL_SECONDS);
+        if (signed.error) throw signed.error;
+        return signed.data.signedUrl;
+      },
+    };
   },
 
   async record(records: ScanRecord[]): Promise<void> {

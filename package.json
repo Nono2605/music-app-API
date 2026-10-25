@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "backfill:audio": "tsx src/scripts/backfillAudio.ts",
+    "pilot:acrcloud": "tsx src/scripts/acrcloudPilot.ts",
     "loadtest": "tsx src/scripts/loadTest.ts",
     "test:worker": "node --test cdn-worker/test/*.test.js",
     "purge:anonymized": "tsx src/scripts/purgeAnonymized.ts",

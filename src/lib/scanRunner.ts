@@ -88,7 +88,7 @@ export async function processJob(deps: ScanRunnerDeps, job: ScanJob): Promise<vo
     } catch (err) {
       // « Indisponible » n'est jamais « ok » : un avertissement à relire, avec la raison pour les journaux.
       deps.log?.(`contrôle ${scanner.kind} indisponible pour le morceau ${job.trackId} : ${describeError(err)}`);
-      records.push({ ...base, result: "warn", detail: { ...trace, unavailable: true } });
+      records.push({ ...base, result: "warn", detail: { ...trace, unavailable: true, message: describeError(err).slice(0, 200) } });
     }
   }
 
