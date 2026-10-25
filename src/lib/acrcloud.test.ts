@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { acrCloudConfigFrom, AcrCloudError, identifySample, identifySignature, parseIdentifyResponse } from "./acrcloud";
+import { acrCloudConfigFrom, acrCloudTuningFrom, AcrCloudError, identifySample, identifySignature, parseIdentifyResponse } from "./acrcloud";
 
 describe("acrCloudConfigFrom", () => {
   const full = { ACRCLOUD_HOST: "identify-eu-west-1.acrcloud.com", ACRCLOUD_ACCESS_KEY: "key", ACRCLOUD_ACCESS_SECRET: "secret" };
@@ -154,5 +154,29 @@ describe("identifySample", () => {
         (err: unknown) => err instanceof AcrCloudError && !/key|secret/i.test(err.message.replace(/access key|wrong access/gi, ""))
       );
     }
+  });
+});
+
+describe("acrCloudTuningFrom", () => {
+  it("sans réglage : seuil d'avertissement 60, jamais d'alerte grave automatique, 300 requêtes par mois", () => {
+    assert.deepEqual(acrCloudTuningFrom({}), { warnScore: 60, failScore: null, monthlyCap: 300 });
+  });
+
+  it("lit les trois réglages", () => {
+    assert.deepEqual(
+      acrCloudTuningFrom({ ACRCLOUD_WARN_SCORE: "75", ACRCLOUD_FAIL_SCORE: "95", ACRCLOUD_MONTHLY_REQUESTS: "1000" }),
+      { warnScore: 75, failScore: 95, monthlyCap: 1000 }
+    );
+  });
+
+  it("une valeur vide, négative ou illisible est ignorée (défaut, ou « jamais » pour l'alerte grave)", () => {
+    assert.deepEqual(
+      acrCloudTuningFrom({ ACRCLOUD_WARN_SCORE: "  ", ACRCLOUD_FAIL_SCORE: "oui", ACRCLOUD_MONTHLY_REQUESTS: "-5" }),
+      { warnScore: 60, failScore: null, monthlyCap: 300 }
+    );
+  });
+
+  it("zéro est une valeur permise (un plafond à 0 coupe le contrôle)", () => {
+    assert.equal(acrCloudTuningFrom({ ACRCLOUD_MONTHLY_REQUESTS: "0" }).monthlyCap, 0);
   });
 });

@@ -25,6 +25,34 @@ export function acrCloudConfigFrom(vars: Record<string, string | undefined>): Ac
   return { host, accessKey, accessSecret };
 }
 
+// Les réglages facultatifs du contrôle d'empreinte, avec leurs valeurs par défaut : une seule lecture pour le contrôle
+// lui-même (lib/scanQueue.ts) et pour la page System de l'admin (lib/configReport.ts).
+//   ACRCLOUD_WARN_SCORE         score (0 à 100) à partir duquel une reconnaissance est un avertissement (60)
+//   ACRCLOUD_FAIL_SCORE         score à partir duquel c'est une alerte grave ; absent = jamais (décision humaine)
+//   ACRCLOUD_MONTHLY_REQUESTS   requêtes par mois au plus (300)
+export interface AcrCloudTuning {
+  warnScore: number;
+  failScore: number | null;
+  monthlyCap: number;
+}
+
+export const DEFAULT_WARN_SCORE = 60;
+export const DEFAULT_MONTHLY_CAP = 300;
+
+function nonNegativeNumber(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+export function acrCloudTuningFrom(vars: Record<string, string | undefined>): AcrCloudTuning {
+  return {
+    warnScore: nonNegativeNumber(vars.ACRCLOUD_WARN_SCORE) ?? DEFAULT_WARN_SCORE,
+    failScore: nonNegativeNumber(vars.ACRCLOUD_FAIL_SCORE),
+    monthlyCap: nonNegativeNumber(vars.ACRCLOUD_MONTHLY_REQUESTS) ?? DEFAULT_MONTHLY_CAP,
+  };
+}
+
 // Signature de la requête : HMAC-SHA1, clé = le secret, sur « méthode, chemin, clé d'accès, type de données, version de
 // signature, horodatage » séparés par des sauts de ligne ; résultat en base64.
 export function identifySignature(accessKey: string, accessSecret: string, timestamp: number | string): string {

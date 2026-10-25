@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { parsePrivacyConfig } from "../lib/consents";
 import { parseCdnConfig } from "../lib/cdnToken";
+import { acrCloudTuningFrom } from "../lib/acrcloud";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -53,6 +54,12 @@ export const env = {
   cdnBaseUrl: process.env.CDN_BASE_URL?.trim() || undefined,
   cdnTokenSecret: process.env.CDN_TOKEN_SECRET?.trim() || undefined,
   cdn: parseCdnConfig(process.env.CDN_BASE_URL, process.env.CDN_TOKEN_SECRET),
+  // ACRCloud (lib/acrcloud.ts, contrôle d'empreinte des morceaux) : l'hôte, la clé et le secret du projet (les trois ou
+  // rien : sans eux, aucun extrait n'est envoyé) et les réglages facultatifs (seuils, plafond mensuel).
+  acrcloudHost: process.env.ACRCLOUD_HOST?.trim() || undefined,
+  acrcloudAccessKey: process.env.ACRCLOUD_ACCESS_KEY?.trim() || undefined,
+  acrcloudAccessSecret: process.env.ACRCLOUD_ACCESS_SECRET?.trim() || undefined,
+  acrcloudTuning: acrCloudTuningFrom(process.env),
   // Vie privée (lib/consents.ts) : âge minimum (16 par défaut) et finalités facultatives
   // à demander (aucune par défaut : on ne demande rien d'inutile).
   privacy: parsePrivacyConfig(process.env.PRIVACY_MIN_AGE, process.env.PRIVACY_OPTIONAL_PURPOSES),

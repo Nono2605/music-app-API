@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { env } from "../../config/env";
 import { buildConfigReport } from "../../lib/configReport";
-import { enqueueTrackScans, scanRunner } from "../../lib/scanQueue";
+import { acrCloudRequestsThisMonth, enqueueTrackScans, scanRunner } from "../../lib/scanQueue";
 import { requireAuthStrict } from "../../middleware/auth";
 import { requireAdmin } from "../../middleware/requireAdmin";
 import { isUuid } from "../albums/list";
@@ -10,14 +10,21 @@ export const adminRouter = Router();
 
 // GET /admin/config — ce qui est réglé sur cette API (modes, secrets réglés oui / non, version déployée). RÉSERVÉ AUX
 // ADMINS. Ne renvoie jamais la valeur d'un secret : voir lib/configReport.ts. Sert à la page « System » de l'admin.
-adminRouter.get("/config", requireAuthStrict, requireAdmin, (_req, res) => {
-  res.json(
-    buildConfigReport(env, {
+adminRouter.get("/config", requireAuthStrict, requireAdmin, async (_req, res, next) => {
+  try {
+    const report = buildConfigReport(env, {
       commit: process.env.RENDER_GIT_COMMIT,
       nodeVersion: process.version,
       uptimeSeconds: process.uptime(),
-    })
-  );
+    });
+    // Les requêtes déjà envoyées à ACRCloud ce mois-ci (pour le plafond) : lues dans le journal, jamais bloquantes.
+    if (report.fingerprint.active) {
+      report.fingerprint.requests_this_month = await acrCloudRequestsThisMonth().catch(() => null);
+    }
+    res.json(report);
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /admin/scans/run — réveille l'exécuteur des contrôles automatiques (voir lib/scanRunner.ts). L'API tourne sur une

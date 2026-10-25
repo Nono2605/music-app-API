@@ -34,6 +34,8 @@ describe("buildConfigReport", () => {
       stripeSecretKey: "sk_test_VALUE1234567890",
       stripeWebhookSecret: "whsec_VALUE1234567890",
       cdnTokenSecret: "cdn-secret-VALUE-1234567890",
+      acrcloudAccessKey: "acr-key-VALUE-1234567890",
+      acrcloudAccessSecret: "acr-secret-VALUE-1234567890",
     };
     const text = JSON.stringify(buildConfigReport({ ...base, ...secrets, checkoutReturnBaseUrl: "https://app.vynl.ch/account?token=abc" }, runtime));
     for (const value of Object.values(secrets)) assert.equal(text.includes(value), false, value);
@@ -93,3 +95,48 @@ describe("buildConfigReport", () => {
     assert.deepEqual(badUrl.cdn, { active: false, host: null, configured_host: "cdn.vynl.li" });
   });
 });
+
+describe("buildConfigReport : contrôle d'empreinte ACRCloud", () => {
+  const set = { acrcloudHost: "identify-eu-west-1.acrcloud.com", acrcloudAccessKey: "key", acrcloudAccessSecret: "secret" };
+
+  it("rien de réglé : pas actif, les trois réglages sont à poser, valeurs par défaut", () => {
+    assert.deepEqual(buildConfigReport(base, runtime).fingerprint, {
+      active: false,
+      host: null,
+      missing: ["ACRCLOUD_HOST", "ACRCLOUD_ACCESS_KEY", "ACRCLOUD_ACCESS_SECRET"],
+      warn_score: 60,
+      fail_score: null,
+      monthly_cap: 300,
+      requests_this_month: null,
+    });
+  });
+
+  it("les trois posés : actif, avec l'hôte seulement (ni la clé ni le secret)", () => {
+    const report = buildConfigReport({ ...base, ...set }, runtime).fingerprint;
+    assert.equal(report.active, true);
+    assert.equal(report.host, "identify-eu-west-1.acrcloud.com");
+    assert.deepEqual(report.missing, []);
+    const text = JSON.stringify(report);
+    assert.equal(text.includes("secret"), false);
+    assert.equal(text.includes('"key"'), false);
+  });
+
+  it("à moitié réglé : pas actif, et on dit ce qui manque", () => {
+    const report = buildConfigReport({ ...base, acrcloudHost: set.acrcloudHost, acrcloudAccessKey: "key" }, runtime).fingerprint;
+    assert.equal(report.active, false);
+    assert.equal(report.host, null);
+    assert.deepEqual(report.missing, ["ACRCLOUD_ACCESS_SECRET"]);
+  });
+
+  it("les trois posés mais un hôte qui n'en est pas un : pas actif, et la raison est dite", () => {
+    const report = buildConfigReport({ ...base, ...set, acrcloudHost: "pas un hôte!" }, runtime).fingerprint;
+    assert.equal(report.active, false);
+    assert.deepEqual(report.missing, ["ACRCLOUD_HOST (not a valid host name)"]);
+  });
+
+  it("reprend les réglages facultatifs", () => {
+    const report = buildConfigReport({ ...base, ...set, acrcloudTuning: { warnScore: 75, failScore: 95, monthlyCap: 1000 } }, runtime).fingerprint;
+    assert.deepEqual([report.warn_score, report.fail_score, report.monthly_cap], [75, 95, 1000]);
+  });
+});
+

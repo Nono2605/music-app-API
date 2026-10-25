@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { acrCloudConfigFrom, identifySample } from "./acrcloud";
+import { acrCloudConfigFrom, acrCloudTuningFrom, identifySample } from "./acrcloud";
 import { cutSample } from "./audioSamples";
 import type { BlockedDb } from "./blockedFiles";
 import type { DuplicateDb } from "./duplicateFile";
@@ -64,13 +64,8 @@ const AUDIO_BUCKET = "track-audio";
 const AUDIO_URL_SECONDS = 900;
 const REUSE_DAYS = 90;
 
-function numberFromEnv(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
-  return process.env[name]?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
 // Les requêtes déjà envoyées à ACRCloud ce mois-ci (UTC), d'après le journal : sert au plafond mensuel.
-async function acrCloudRequestsThisMonth(): Promise<number> {
+export async function acrCloudRequestsThisMonth(): Promise<number> {
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const { data, error } = await supabaseAdmin
@@ -116,16 +111,16 @@ function buildScanners(): Scanner[] {
   const ffmpegStatic: string | null = require("ffmpeg-static");
   const ffmpeg = process.env.FFMPEG_PATH || ffmpegStatic;
   if (acr && ffmpeg) {
-    const failScore = process.env.ACRCLOUD_FAIL_SCORE?.trim() ? numberFromEnv("ACRCLOUD_FAIL_SCORE", NaN) : undefined;
+    const tuning = acrCloudTuningFrom(process.env);
     scanners.push(
       fingerprintScanner({
         identify: (sample) => identifySample(acr, sample),
         cut: (url, startSeconds) => cutSample(ffmpeg, url, startSeconds),
         requestsThisMonth: acrCloudRequestsThisMonth,
         previous: previousFingerprint,
-        warnScore: numberFromEnv("ACRCLOUD_WARN_SCORE", 60),
-        failScore: failScore !== undefined && Number.isFinite(failScore) ? failScore : undefined,
-        monthlyCap: numberFromEnv("ACRCLOUD_MONTHLY_REQUESTS", 300),
+        warnScore: tuning.warnScore,
+        failScore: tuning.failScore ?? undefined,
+        monthlyCap: tuning.monthlyCap,
       })
     );
   } else if (acr) {

@@ -3,6 +3,8 @@
 // Pure (aucune variable d'environnement lue ici) pour être testable seule. Règle : un secret n'apparaît que sous la
 // forme « réglé : oui / non » ; une adresse n'apparaît que par son nom d'hôte.
 
+import { acrCloudConfigFrom, type AcrCloudTuning } from "./acrcloud";
+
 export interface ConfigInput {
   entitlementMode: "beta" | "live";
   authLocalVerify: boolean;
@@ -17,6 +19,11 @@ export interface ConfigInput {
   cdnBaseUrl?: string;
   cdnTokenSecret?: string;
   cdn?: { baseUrl: string };
+  // ACRCloud : les trois valeurs brutes (jamais rendues) et les réglages facultatifs.
+  acrcloudHost?: string;
+  acrcloudAccessKey?: string;
+  acrcloudAccessSecret?: string;
+  acrcloudTuning?: AcrCloudTuning;
   corsAllowedOrigins: string[];
 }
 
@@ -42,7 +49,41 @@ export interface ConfigReport {
   checkout_return_host: string | null;
   // `active` : l'API sert l'écoute par le CDN (adresse valide ET secret réglé). `configured_host` : l'adresse demandée, même invalide.
   cdn: { active: boolean; host: string | null; configured_host: string | null };
+  fingerprint: FingerprintReport;
   cors_allowed_origins: string[];
+}
+
+// Le contrôle d'empreinte ACRCloud. `active` : les trois réglages sont posés et valides ; `missing` liste alors rien. Sinon
+// `missing` nomme les réglages à poser (ou dit que l'hôte n'est pas valide). `requests_this_month` est ajouté par la route
+// (il vient du journal en base) : null tant qu'il n'est pas connu.
+export interface FingerprintReport {
+  active: boolean;
+  host: string | null;
+  missing: string[];
+  warn_score: number;
+  fail_score: number | null;
+  monthly_cap: number;
+  requests_this_month: number | null;
+}
+
+const ACRCLOUD_SETTINGS = ["ACRCLOUD_HOST", "ACRCLOUD_ACCESS_KEY", "ACRCLOUD_ACCESS_SECRET"] as const;
+
+function fingerprintReport(config: ConfigInput): FingerprintReport {
+  const raw = { ACRCLOUD_HOST: config.acrcloudHost, ACRCLOUD_ACCESS_KEY: config.acrcloudAccessKey, ACRCLOUD_ACCESS_SECRET: config.acrcloudAccessSecret };
+  const active = acrCloudConfigFrom(raw);
+  const missing: string[] = ACRCLOUD_SETTINGS.filter((name) => !raw[name]?.trim());
+  // Les trois sont posés mais l'hôte n'a pas la forme d'un nom d'hôte : on le dit au lieu de ne rien dire.
+  if (!active && missing.length === 0) missing.push("ACRCLOUD_HOST (not a valid host name)");
+  const tuning = config.acrcloudTuning ?? { warnScore: 60, failScore: null, monthlyCap: 300 };
+  return {
+    active: active !== null,
+    host: active ? active.host : null,
+    missing: active ? [] : missing,
+    warn_score: tuning.warnScore,
+    fail_score: tuning.failScore,
+    monthly_cap: tuning.monthlyCap,
+    requests_this_month: null,
+  };
 }
 
 function hostOf(value: string | undefined): string | null {
@@ -84,6 +125,7 @@ export function buildConfigReport(config: ConfigInput, runtime: RuntimeInput): C
     },
     checkout_return_host: hostOf(config.checkoutReturnBaseUrl),
     cdn: { active: Boolean(config.cdn), host: hostOf(config.cdn?.baseUrl), configured_host: hostOf(config.cdnBaseUrl) },
+    fingerprint: fingerprintReport(config),
     cors_allowed_origins: [...config.corsAllowedOrigins],
   };
 }
