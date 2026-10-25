@@ -15,6 +15,7 @@ import { probeAudioUrl, AudioProbeError, type AudioProbe, type AudioProbeFailure
 import { syncTrackDuration } from "../../lib/syncTrackDuration";
 import { myArtistId } from "../../lib/myArtistId";
 import { trackReviewProblem, releaseReviewProblem } from "../../lib/reviewReadiness";
+import { queueScansAfterAlbumSubmit, queueScansAfterSubmit } from "../../lib/scanQueue";
 import { classifyArtistInsertError } from "../../lib/artistName";
 import { checkArtistName } from "../../lib/artistNameCheck";
 import {
@@ -791,6 +792,8 @@ creatorRouter.patch("/albums/:id", async (req, res, next) => {
       if (removeError) console.error("Could not remove previous cover:", removeError.message);
     }
     res.json(data);
+    // Envoyée en relecture : les contrôles automatiques de ses morceaux démarrent (voir lib/scanQueue.ts).
+    if (updates.status === "in_review" && album.status !== "in_review") queueScansAfterAlbumSubmit(album.id);
   } catch (err) {
     next(err);
   }
@@ -995,6 +998,8 @@ creatorRouter.patch("/tracks/:id", async (req, res, next) => {
 
     if (error) throw error;
     res.json(data);
+    // Envoyé en relecture : les contrôles automatiques démarrent (voir lib/scanQueue.ts).
+    if (updates.status === "in_review" && track.status !== "in_review") queueScansAfterSubmit([track.id]);
   } catch (err) {
     next(err);
   }
