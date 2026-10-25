@@ -91,6 +91,20 @@ export function duplicateFileScan(input: {
   };
 }
 
+// Un fichier de la liste de blocage (retiré à la suite d'un signalement d'ayant droit) a été refusé à l'envoi.
+// Rien sur le signalement dans le détail : l'artiste n'a pas à le savoir, la page de l'admin retrouve le dossier par le
+// fichier bloqué.
+export function blockedFileScan(input: { trackId: string; artistId: string }): ScanRecord {
+  return {
+    track_id: input.trackId,
+    artist_id: input.artistId,
+    check_kind: "blocked_file",
+    result: "fail",
+    score: 1,
+    detail: { reason: "blocklist", blocked_upload: true },
+  };
+}
+
 // Des noms d'artistes proches ont été trouvés à la création d'un artiste : à relire, pas bloquant.
 export function nameSimilarityScans(
   artistId: string,

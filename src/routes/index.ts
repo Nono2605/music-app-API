@@ -12,11 +12,12 @@ import { privacyRouter } from "../modules/privacy/routes";
 import { stripeRouter } from "../modules/stripe/routes";
 import { billingRouter } from "../modules/billing/routes";
 import { adminRouter } from "../modules/admin/routes";
-import { rateLimit } from "../lib/rateLimit";
+import { clientIp, rateLimit } from "../lib/rateLimit";
 import { accountRouter } from "../modules/privacy/account";
 import { creatorGenreRouter } from "../modules/creator/genre";
 import { creatorDetailsRouter } from "../modules/creator/details";
 import { genresRouter } from "../modules/genres/routes";
+import { rightsRouter } from "../modules/rights/routes";
 
 export const apiRouter = Router();
 
@@ -52,12 +53,16 @@ apiRouter.post("/me/delete", perHour(5));
 apiRouter.use("/billing", perMinute(10)); // chaque appel crée des objets chez Stripe
 apiRouter.use("/stripe", perMinute(30));
 apiRouter.use("/admin", perMinute(30));
+// Formulaire public de signalement : pas de compte, donc une limite par adresse IP, courte puis horaire.
+apiRouter.post("/rights/claims", rateLimit({ windowMs: 60_000, max: 5, key: clientIp }));
+apiRouter.post("/rights/claims", rateLimit({ windowMs: 3_600_000, max: 20, key: clientIp }));
 
 apiRouter.use("/", usersRouter);
 apiRouter.use("/", privacyRouter);
 apiRouter.use("/", accountRouter);
 apiRouter.use("/artists", artistsRouter);
 apiRouter.use("/genres", genresRouter);
+apiRouter.use("/rights", rightsRouter);
 apiRouter.use("/tracks", tracksRouter);
 apiRouter.use("/albums", albumsRouter);
 apiRouter.use("/library", libraryRouter);

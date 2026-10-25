@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { duplicateFileScan, nameSimilarityScans, recordScans, type ScanDb } from "./scanLog";
+import { blockedFileScan, duplicateFileScan, nameSimilarityScans, recordScans, type ScanDb } from "./scanLog";
 import { isMissingTable } from "./schemaCompat";
 import { toSimilarNames } from "./artistNameCheck";
 
@@ -77,5 +77,16 @@ describe("toSimilarNames", () => {
     assert.deepEqual(toSimilarNames(null), []);
     assert.deepEqual(toSimilarNames("x"), []);
     assert.deepEqual(toSimilarNames([{ name: "sans id", similarity: 0.7 }, { artist_id: "x", name: "ok", similarity: "abc" }]), []);
+  });
+});
+
+describe("blockedFileScan", () => {
+  it("un fichier bloqué : échec, sans rien dire du signalement", () => {
+    const scan = blockedFileScan({ trackId: "t", artistId: "a" });
+    assert.equal(scan.check_kind, "blocked_file");
+    assert.equal(scan.result, "fail");
+    assert.equal(scan.track_id, "t");
+    assert.equal(scan.artist_id, "a");
+    assert.equal(JSON.stringify(scan).includes("claim"), false);
   });
 });

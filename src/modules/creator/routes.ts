@@ -26,7 +26,8 @@ import {
 } from "../../lib/artistNameReview";
 import { isMissingColumn } from "../../lib/schemaCompat";
 import { DUPLICATE_FILE_MESSAGE, findForeignDuplicate } from "../../lib/duplicateFile";
-import { duplicateFileScan, nameSimilarityScans, recordScans, supersedeNameScans } from "../../lib/scanLog";
+import { blockedFileScan, duplicateFileScan, nameSimilarityScans, recordScans, supersedeNameScans } from "../../lib/scanLog";
+import { BLOCKED_FILE_MESSAGE, isBlockedChecksum } from "../../lib/blockedFiles";
 import { genreProblem, readTrackGenre, readTrackGenres, releaseGenreProblem } from "../../lib/genres";
 import {
   ARTIST_IMAGE_BUCKET,
@@ -1165,6 +1166,14 @@ creatorRouter.post("/tracks/:id/files", async (req, res, next) => {
         await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
       }
       return res.status(PROBE_STATUS[err.reason]).json({ error: err.message });
+    }
+
+    // Fichier retiré à la suite d'un signalement d'ayant droit (liste de blocage) : refusé pour tout le monde,
+    // sans dire pourquoi. La tentative est journalisée pour la relecture.
+    if (await isBlockedChecksum(probe.sha256)) {
+      await supabaseAdmin.storage.from(AUDIO_BUCKET).remove([path]);
+      await recordScans([blockedFileScan({ trackId: track.id, artistId: track.artist_id })]);
+      return res.status(409).json({ error: BLOCKED_FILE_MESSAGE, code: "file_not_accepted" });
     }
 
     // Même contenu déjà attaché à ce morceau (réupload du même fichier).
