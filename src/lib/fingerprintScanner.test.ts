@@ -29,15 +29,21 @@ const context = (overrides: Partial<ScanContext> = {}): ScanContext => ({
 
 // Des dépendances en mémoire, avec le journal des appels.
 function fakeDeps(overrides: Partial<FingerprintDeps> = {}, answers: IdentifyResult[] = []) {
-  const calls = { cuts: [] as number[], identified: 0 };
+  const calls = { cuts: [] as number[], identified: 0, opened: [] as string[], closed: 0 };
   const deps: FingerprintDeps = {
     identify: async () => {
       calls.identified++;
       return answers.shift() ?? none;
     },
-    cut: async (_url, start) => {
-      calls.cuts.push(start);
-      return Buffer.from("sample");
+    openSampler: async (url) => {
+      calls.opened.push(url);
+      return {
+        cut: async (start) => {
+          calls.cuts.push(start);
+          return Buffer.from("sample");
+        },
+        close: async () => void calls.closed++,
+      };
     },
     requestsThisMonth: async () => 0,
     previous: async () => null,
@@ -167,4 +173,39 @@ describe("fingerprintScanner", () => {
 
     assert.equal(calls.identified, 1);
   });
+
+  it("télécharge le morceau UNE seule fois et en découpe tous les extraits, puis supprime la copie", async () => {
+    const { deps, calls } = fakeDeps();
+
+    await fingerprintScanner(deps).run(context());
+
+    assert.deepEqual(calls.opened, ["https://signed.example/audio"]);
+    assert.equal(calls.cuts.length, 3);
+    assert.equal(calls.closed, 1);
+  });
+
+  it("la copie est supprimée même si le prestataire échoue en cours de route", async () => {
+    const { deps, calls } = fakeDeps({ identify: async () => { throw new Error("ACRCloud unreachable: network error"); } });
+
+    await assert.rejects(() => fingerprintScanner(deps).run(context()), /unreachable/);
+    assert.equal(calls.closed, 1);
+  });
+
+  it("rien n'est téléchargé quand le plafond est atteint, ni quand le résultat est repris", async () => {
+    const capped = fakeDeps({ requestsThisMonth: async () => 300, monthlyCap: 300 });
+    await assert.rejects(() => fingerprintScanner(capped.deps).run(context()), /cap reached/);
+    assert.equal(capped.calls.opened.length, 0);
+
+    const reused = fakeDeps({ previous: async () => ({ result: "ok", score: null, detail: {} }) });
+    await fingerprintScanner(reused.deps).run(context());
+    assert.equal(reused.calls.opened.length, 0);
+  });
+
+  it("un téléchargement qui échoue LÈVE l'erreur (indisponible), sans requête au prestataire", async () => {
+    const { deps, calls } = fakeDeps({ openSampler: async () => { throw new Error("audio download failed (HTTP 400)"); } });
+
+    await assert.rejects(() => fingerprintScanner(deps).run(context()), /download failed/);
+    assert.equal(calls.identified, 0);
+  });
 });
+

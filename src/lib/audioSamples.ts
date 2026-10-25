@@ -1,9 +1,12 @@
 // Les EXTRAITS audio envoyés à un prestataire de reconnaissance : quelques tranches d'une douzaine de secondes, réparties
 // dans le morceau (un mashup ou un sample se trahit à un endroit précis, pas forcément au début). ffmpeg (le même que
-// celui du transcodage, paquet ffmpeg-static) découpe directement depuis le fichier ou son adresse signée : un
-// morceau n'est jamais téléchargé en entier pour ça.
+// celui du transcodage, paquet ffmpeg-static) découpe dans un fichier LOCAL (voir lib/tempDownload.ts) et écrit un petit
+// WAV : aucun encodeur à installer, rien à lire sur le réseau.
 
 import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ACRCloud conseille moins de 15 secondes par extrait.
 export const SAMPLE_SECONDS = 12;
@@ -24,54 +27,70 @@ export function sampleOffsets(durationSeconds: number | null, count: number = DE
   return [...new Set(starts)];
 }
 
-// mp3 mono 16 kHz à 64 kbit/s : une douzaine de secondes pèsent une centaine de kilo-octets (la limite d'ACRCloud est de 5 Mo).
-//   -ss avant -i : se place directement dans le fichier (requête partielle sur une adresse HTTP)
+// WAV (PCM 16 bits) mono 16 kHz : une douzaine de secondes pèsent environ 400 Ko (la limite d'ACRCloud est de 5 Mo).
+//   -ss avant -i : se place directement dans le fichier local
 //   -vn -map_metadata -1 : ni image de pochette, ni étiquettes
-export function buildSampleArgs(input: string, startSeconds: number, seconds: number = SAMPLE_SECONDS): string[] {
+//   sortie dans un FICHIER (un WAV écrit dans un tube n'a pas de taille dans son en-tête)
+export function buildSampleArgs(input: string, startSeconds: number, seconds: number, output: string): string[] {
   return [
     "-hide_banner", "-nostdin", "-loglevel", "error",
     "-ss", String(Math.max(0, startSeconds)), "-t", String(seconds),
     "-i", input,
     "-vn", "-map_metadata", "-1",
-    "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "64k",
-    "-f", "mp3", "pipe:1",
+    "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+    "-f", "wav", "-y", output,
   ];
 }
 
 const STDERR_KEPT = 500;
 
-// Découpe un extrait et le rend en mémoire. Erreur avec la fin de ce que ffmpeg a écrit s'il échoue ; tué au bout de
-// `timeoutMs`.
-export function cutSample(
+// Pourquoi ffmpeg s'est arrêté : « code 1 » (il a refusé) ou « killed by SIGKILL » (le système l'a arrêté, souvent faute de
+// mémoire ; SIGSEGV et SIGILL : le programme lui-même a planté).
+function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
+  if (!signal) return `code ${code}`;
+  if (signal === "SIGKILL") return `killed by SIGKILL, often out of memory`;
+  if (signal === "SIGSEGV" || signal === "SIGILL" || signal === "SIGBUS") return `crashed with ${signal}`;
+  return `killed by ${signal}`;
+}
+
+// Découpe un extrait d'un fichier LOCAL et le rend en mémoire (WAV). Erreur avec la fin de ce que ffmpeg a écrit s'il échoue ;
+// tué au bout de `timeoutMs`. Le dossier temporaire est toujours supprimé.
+export async function cutSample(
   ffmpegBinary: string,
-  input: string,
+  inputPath: string,
   startSeconds: number,
   seconds: number = SAMPLE_SECONDS,
   timeoutMs = 60_000
 ): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegBinary, buildSampleArgs(input, startSeconds, seconds), { stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString()).slice(-STDERR_KEPT);
+  const dir = await mkdtemp(join(tmpdir(), "vynl-sample-"));
+  const output = join(dir, "sample.wav");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(ffmpegBinary, buildSampleArgs(inputPath, startSeconds, seconds, output), { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString()).slice(-STDERR_KEPT);
+      });
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error(`ffmpeg stopped after ${Math.round(timeoutMs / 1000)} s`));
+      }, timeoutMs);
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`ffmpeg does not start: ${err.message}`));
+      });
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        // Une adresse (signée, donc secrète un quart d'heure) peut figurer dans les messages de ffmpeg : on l'efface.
+        const detail = stderr.replace(/https?:\/\/\S+/g, "<address>").trim();
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg failed (${describeExit(code, signal)}): ${detail || "no message"}`));
+      });
     });
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`ffmpeg stopped after ${Math.round(timeoutMs / 1000)} s`));
-    }, timeoutMs);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new Error(`ffmpeg does not start: ${err.message}`));
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      const sample = Buffer.concat(chunks);
-      // L'adresse d'entrée (signée, donc secrète un quart d'heure) peut figurer dans les messages de ffmpeg : on l'efface.
-      const detail = stderr.replace(/https?:\/\/\S+/g, "<address>").trim();
-      if (code === 0 && sample.length > 0) resolve(sample);
-      else reject(new Error(`ffmpeg failed (code ${code}): ${detail || "no sample produced"}`));
-    });
-  });
+    const sample = await readFile(output);
+    if (sample.length === 0) throw new Error("ffmpeg failed (code 0): no sample produced");
+    return sample;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }

@@ -4,6 +4,7 @@ import { cutSample } from "./audioSamples";
 import type { BlockedDb } from "./blockedFiles";
 import type { DuplicateDb } from "./duplicateFile";
 import { fingerprintScanner } from "./fingerprintScanner";
+import { downloadToTempFile } from "./tempDownload";
 import { createScanRunner, type ScanJob, type ScanRunnerDeps } from "./scanRunner";
 import { blockedAudioScanner, duplicateAudioScanner, similarTitleScanner, type ScanContext, type ScanOutcome, type Scanner } from "./scanners";
 import type { ScanRecord } from "./scanLog";
@@ -115,7 +116,10 @@ function buildScanners(): Scanner[] {
     scanners.push(
       fingerprintScanner({
         identify: (sample) => identifySample(acr, sample),
-        cut: (url, startSeconds) => cutSample(ffmpeg, url, startSeconds),
+        openSampler: async (url) => {
+          const file = await downloadToTempFile(url);
+          return { cut: (startSeconds) => cutSample(ffmpeg, file.path, startSeconds), close: file.cleanup };
+        },
         requestsThisMonth: acrCloudRequestsThisMonth,
         previous: previousFingerprint,
         warnScore: tuning.warnScore,

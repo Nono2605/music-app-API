@@ -17,11 +17,18 @@ import type { AcrMatch, IdentifyResult } from "./acrcloud";
 import { sampleOffsets } from "./audioSamples";
 import type { ScanOutcome, Scanner } from "./scanners";
 
+// Une copie LOCALE du morceau, d'où sortent les extraits (le fichier est téléchargé une seule fois) ; `close` la supprime.
+export interface Sampler {
+  /** Découpe l'extrait qui commence à `startSeconds`. */
+  cut(startSeconds: number): Promise<Buffer>;
+  close(): Promise<void>;
+}
+
 export interface FingerprintDeps {
   /** Envoie un extrait au prestataire. */
   identify(sample: Buffer): Promise<IdentifyResult>;
-  /** Découpe l'extrait qui commence à `startSeconds` dans le fichier (adresse signée). */
-  cut(url: string, startSeconds: number): Promise<Buffer>;
+  /** Télécharge le morceau (adresse signée) et rend de quoi en découper des extraits. */
+  openSampler(url: string): Promise<Sampler>;
   /** Requêtes déjà envoyées ce mois-ci (pour le plafond). */
   requestsThisMonth(): Promise<number>;
   /** Un résultat déjà obtenu pour le MÊME fichier de ce morceau, à reprendre ; null s'il n'y en a pas. */
@@ -87,9 +94,14 @@ export function fingerprintScanner(deps: FingerprintDeps): Scanner {
       }
 
       const perSample: { offset: number; result: IdentifyResult }[] = [];
-      for (const offset of offsets) {
-        const sample = await deps.cut(url, offset);
-        perSample.push({ offset, result: await deps.identify(sample) });
+      const sampler = await deps.openSampler(url);
+      try {
+        for (const offset of offsets) {
+          const sample = await sampler.cut(offset);
+          perSample.push({ offset, result: await deps.identify(sample) });
+        }
+      } finally {
+        await sampler.close().catch(() => {});
       }
 
       const matches = mergeMatches(perSample);
