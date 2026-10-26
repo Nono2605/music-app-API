@@ -7,7 +7,7 @@
 // Le prestataire de reconnaissance (empreinte acoustique) viendra ici comme un contrôle de plus.
 
 import { isBlockedChecksum, type BlockedDb } from "./blockedFiles";
-import type { DuplicateDb } from "./duplicateFile";
+import { lookupForeignDuplicate, type DuplicateDb } from "./duplicateFile";
 import type { ScanRecord } from "./scanLog";
 import { loadSimilarTracks, type TitleDb, type TrackLite } from "./similarTitle";
 
@@ -58,17 +58,11 @@ export function duplicateAudioScanner(db: DuplicateDb): Scanner {
       if (candidates.length === 0) return [{ result: "ok", detail: { files: files.length, compared: 0 } }];
 
       for (const { checksum, fileId } of candidates) {
-        const sameFile = await db.from("track_files").select("id, track_id").eq("checksum", checksum).limit(50);
-        if (sameFile.error) throw sameFile.error;
-        const trackIds = [...new Set((sameFile.data ?? []).map((row) => row.track_id))];
-        if (trackIds.length === 0) continue;
-
-        const others = await db.from("tracks").select("id, artist_id").in("id", trackIds).neq("artist_id", track.artist_id).limit(1);
-        if (others.error) throw others.error;
-        const other = others.data?.[0];
+        // Même règle que l'envoi (lib/duplicateFile.ts), mais une panne de base LÈVE l'erreur : jamais « ok » en silence.
+        const other = await lookupForeignDuplicate(checksum, track.artist_id, db);
         if (other) {
           return [
-            { result: "fail", track_file_id: fileId, matched_track_id: other.id, matched_artist_id: other.artist_id, detail: { compared: candidates.length } },
+            { result: "fail", track_file_id: fileId, matched_track_id: other.trackId, matched_artist_id: other.artistId, detail: { compared: candidates.length } },
           ];
         }
       }

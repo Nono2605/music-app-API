@@ -18,6 +18,7 @@ function fakeDb(tables: Record<string, Row[]>, failOn?: string) {
             eq(column: string, value: unknown) { rows = rows.filter((r) => r[column] === value); return query; },
             neq(column: string, value: unknown) { rows = rows.filter((r) => r[column] !== value); return query; },
             in(column: string, values: unknown[]) { rows = rows.filter((r) => values.includes(r[column])); return query; },
+            is(column: string, value: null) { rows = rows.filter((r) => (r[column] ?? null) === value); return query; },
             ilike(column: string, pattern: string) {
               rows = rows.filter((r) => String(r[column]).toLowerCase() === pattern.toLowerCase());
               return query;
@@ -73,6 +74,26 @@ describe("duplicateAudioScanner", () => {
 
     assert.equal((await scanner.run(context()))[0].result, "ok");
     assert.equal((await scanner.run(context({}, [{ id: "f1", checksum: null, storage_key: "k" }])))[0].result, "ok");
+  });
+
+  it("le même fichier chez un artiste SUPPRIMÉ : ok (comme à l'envoi)", async () => {
+    const db = fakeDb({
+      track_files: [{ id: "f9", track_id: "t9", checksum: HASH }],
+      tracks: [{ id: "t9", artist_id: "a2", artists: { anonymized_at: "2026-10-20T00:00:00Z" } } as unknown as Row],
+    });
+
+    const [outcome] = await duplicateAudioScanner(db as unknown as DuplicateDb).run(context());
+
+    assert.equal(outcome.result, "ok");
+  });
+
+  it("un fichier purgé du stockage ne compte pas : ok", async () => {
+    const db = fakeDb({
+      track_files: [{ id: "f9", track_id: "t9", checksum: HASH, purged_at: "2026-10-21T00:00:00Z" }],
+      tracks: [{ id: "t9", artist_id: "a2" }],
+    });
+
+    assert.equal((await duplicateAudioScanner(db as unknown as DuplicateDb).run(context()))[0].result, "ok");
   });
 
   it("une panne de base LÈVE l'erreur (jamais « ok » en silence)", async () => {
