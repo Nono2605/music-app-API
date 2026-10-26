@@ -59,6 +59,46 @@ export async function enqueueTrackScans(
   return queued;
 }
 
+// Met UN morceau en file en disant ce qui s'est passé, pour que l'admin ne croie pas à tort que « ça tourne » :
+//   queued       une tâche a été créée ;
+//   already_open une tâche attend ou tourne déjà pour ce morceau (ou le morceau n'existe pas) ;
+//   unavailable  la file n'existe pas encore (migration 20261026000000 pas appliquée) : rien ne tournera ;
+//   error        la base a répondu par une erreur (le détail est dans les journaux de l'API).
+// Ne lève jamais.
+export type EnqueueOutcome = "queued" | "already_open" | "unavailable" | "error";
+
+export async function enqueueOneTrackScan(trackId: string, reason: ScanReason, db: RpcDb = supabaseAdmin as unknown as RpcDb): Promise<EnqueueOutcome> {
+  try {
+    const { data, error } = await db.rpc("enqueue_track_scans", { p_track: trackId, p_reason: reason });
+    if (error) {
+      if (isMissingFunction(error) || isMissingTable(error)) {
+        noteQueueMissing();
+        return "unavailable";
+      }
+      console.error("Could not queue the checks:", (error as { message?: string }).message ?? error);
+      return "error";
+    }
+    return data ? "queued" : "already_open";
+  } catch (err) {
+    console.error("Could not queue the checks:", (err as { message?: string })?.message ?? err);
+    return "error";
+  }
+}
+
+// Le nombre de tâches ouvertes (en attente ou en cours) ; null si la file n'existe pas encore.
+export interface CountDb {
+  from(table: string): { select(columns: string, options: { count: "exact"; head: true }): { in(column: string, values: string[]): PromiseLike<{ count: number | null; error: unknown }> } };
+}
+
+export async function countOpenScanJobs(db: CountDb = supabaseAdmin as unknown as CountDb): Promise<number | null> {
+  const { count, error } = await db.from("scan_jobs").select("id", { count: "exact", head: true }).in("status", ["queued", "running"]);
+  if (error) {
+    if (isMissingTable(error) || isMissingFunction(error)) return null;
+    throw error;
+  }
+  return count ?? 0;
+}
+
 const workerId = `${hostname()}-${process.pid}`;
 
 const AUDIO_BUCKET = "track-audio";
