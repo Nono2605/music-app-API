@@ -9,6 +9,7 @@ import {
 } from "../../lib/billing";
 import { StripeNotConfiguredError } from "../../lib/stripe";
 import { requireAuth, requireAuthStrict } from "../../middleware/auth";
+import { requireSubscriptionsOpen } from "../../middleware/subscriptionsOpen";
 
 export const billingRouter = Router();
 
@@ -61,7 +62,7 @@ billingRouter.get("/plans", requireAuth, async (_req, res, next) => {
 });
 
 // POST /billing/checkout { plan } — l'adresse de la page de paiement Stripe pour ce plan.
-billingRouter.post("/checkout", requireAuthStrict, async (req, res, next) => {
+billingRouter.post("/checkout", requireSubscriptionsOpen, requireAuthStrict, async (req, res, next) => {
   try {
     const plan = req.body?.plan;
     if (typeof plan !== "string" || !/^[a-z][a-z0-9_]{1,30}$/.test(plan)) {
@@ -74,7 +75,7 @@ billingRouter.post("/checkout", requireAuthStrict, async (req, res, next) => {
 });
 
 // POST /billing/portal — l'adresse du portail client Stripe (carte, factures, résiliation).
-billingRouter.post("/portal", requireAuthStrict, async (req, res, next) => {
+billingRouter.post("/portal", requireSubscriptionsOpen, requireAuthStrict, async (req, res, next) => {
   try {
     res.json({ url: await createPortal(req.auth!.id) });
   } catch (err) {

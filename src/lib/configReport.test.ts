@@ -138,5 +138,10 @@ describe("buildConfigReport : contrôle d'empreinte ACRCloud", () => {
     const report = buildConfigReport({ ...base, ...set, acrcloudTuning: { warnScore: 75, failScore: 95, monthlyCap: 1000 } }, runtime).fingerprint;
     assert.deepEqual([report.warn_score, report.fail_score, report.monthly_cap], [75, 95, 1000]);
   });
-});
 
+  it("abonnements : fermés par défaut, ouverts seulement avec subscriptionsOpen", () => {
+    assert.equal(buildConfigReport(base, runtime).subscriptions_open, false);
+    assert.equal(buildConfigReport({ ...base, subscriptionsOpen: false }, runtime).subscriptions_open, false);
+    assert.equal(buildConfigReport({ ...base, subscriptionsOpen: true }, runtime).subscriptions_open, true);
+  });
+});

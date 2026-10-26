@@ -14,6 +14,8 @@ export interface ConfigInput {
   stripeWebhookSecret?: string;
   stripeAllowLive: boolean;
   stripeAutomaticTax: boolean;
+  // Les abonnements sont ouverts (SUBSCRIPTIONS_OPEN=yes) : sinon le paiement est refusé (403).
+  subscriptionsOpen?: boolean;
   checkoutReturnBaseUrl?: string;
   // CDN audio : les deux valeurs brutes, et ce qu'en a retenu l'API (undefined si l'une manque ou si l'adresse est invalide).
   cdnBaseUrl?: string;
@@ -37,6 +39,7 @@ export interface RuntimeInput {
 export interface ConfigReport {
   deploy: { commit: string | null; node: string; uptime_seconds: number };
   entitlement_mode: "beta" | "live";
+  subscriptions_open: boolean;
   auth_local_verify: boolean;
   secrets: {
     ip_hash_secret: boolean;
@@ -110,6 +113,7 @@ export function buildConfigReport(config: ConfigInput, runtime: RuntimeInput): C
       uptime_seconds: Math.max(0, Math.round(runtime.uptimeSeconds)),
     },
     entitlement_mode: config.entitlementMode,
+    subscriptions_open: config.subscriptionsOpen === true,
     auth_local_verify: config.authLocalVerify,
     secrets: {
       ip_hash_secret: Boolean(config.ipHashSecret),

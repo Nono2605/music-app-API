@@ -44,6 +44,9 @@ export const env = {
   // Calcul automatique de la taxe par Stripe Tax : « on » seulement une fois Stripe Tax réglé
   // (adresse de l'entreprise, pays d'enregistrement), sinon la création du paiement échoue.
   stripeAutomaticTax: process.env.STRIPE_AUTOMATIC_TAX === "on",
+  // Les abonnements sont FERMÉS tant que cette variable n'est pas « yes » : POST /billing/checkout et /billing/portal répondent
+  // 403 « disponible après la bêta ». À ouvrir à la fin de la bêta, avec ENTITLEMENT_MODE=live (voir middleware/subscriptionsOpen.ts).
+  subscriptionsOpen: process.env.SUBSCRIPTIONS_OPEN === "yes",
   // Adresse de l'app auditeur (retour de Stripe Checkout et du portail client).
   checkoutReturnBaseUrl: process.env.CHECKOUT_RETURN_BASE_URL?.trim() || undefined,
   // « on » : le jeton d'accès se vérifie localement (signature, clé publique du projet) au lieu d'un appel à
